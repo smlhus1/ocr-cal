@@ -1,0 +1,95 @@
+# Docker Compose for local development
+# Includes: Backend, Frontend, PostgreSQL database
+
+services:
+  # PostgreSQL database
+  db:
+    image: postgres:15-alpine
+    container_name: shiftsync-db
+    environment:
+      POSTGRES_DB: shiftsync
+      POSTGRES_USER: shiftsync_user
+      POSTGRES_PASSWORD: shiftsync_dev_password_change_in_prod
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shiftsync_user -d shiftsync"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # FastAPI backend
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: shiftsync-backend
+    ports:
+      - "8000:8000"
+    environment:
+      # Environment
+      ENVIRONMENT: development
+      
+      # Database
+      DATABASE_URL: postgresql://shiftsync_user:shiftsync_dev_password_change_in_prod@db:5432/shiftsync
+      
+      # Tesseract
+      TESSERACT_PATH: /usr/bin/tesseract
+      OCR_LANGUAGE: nor
+      
+      # OpenAI (for GPT-4 Vision)
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      
+      # Security - MUST be changed in production to a cryptographically random string
+      SECRET_SALT: ${SECRET_SALT:-dev_salt_change_in_production_to_random_string}
+      
+      # Frontend URL (for CORS)
+      FRONTEND_URL: http://localhost:3000
+      
+      # Rate limiting
+      RATE_LIMIT_PER_MINUTE: 10
+      
+      # Azure Storage (optional in dev, uses local storage)
+      # AZURE_STORAGE_CONNECTION_STRING: ${AZURE_STORAGE_CONNECTION_STRING}
+      
+      # Stripe (optional in dev)
+      # STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
+    
+    depends_on:
+      db:
+        condition: service_healthy
+    
+    volumes:
+      # Hot reload for development
+      - ./backend/app:/app/app
+      - ./backend/uploads:/app/uploads
+    
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  # Next.js frontend (to be created)
+  # frontend:
+  #   build:
+  #     context: ./frontend
+  #     dockerfile: Dockerfile.dev
+  #   container_name: shiftsync-frontend
+  #   ports:
+  #     - "3000:3000"
+  #   environment:
+  #     NEXT_PUBLIC_API_URL: http://localhost:8000
+  #   volumes:
+  #     - ./frontend:/app
+  #     - /app/node_modules
+  #     - /app/.next
+  #   command: npm run dev
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  default:
+    name: shiftsync-network
+
