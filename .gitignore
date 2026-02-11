@@ -41,6 +41,10 @@ venv/
 env/
 ENV/
 .venv/
+Lib/
+Scripts/
+Include/
+pyvenv.cfg
 
 # Database
 *.db
