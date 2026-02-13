@@ -32,59 +32,57 @@ class PaymentService:
         if not settings.stripe_secret_key:
             logger.warning("Stripe not configured. Payment features will be disabled.")
     
-    async def check_quota(self, user_identifier: str) -> tuple[bool, int]:
+    async def check_quota(self, session_id: str) -> tuple[bool, int]:
         """
-        Check if user has remaining quota this month.
-        
+        Check if session has remaining quota this month.
+
         Args:
-            user_identifier: Hashed user identifier (from IP)
-            
+            session_id: Anonymous session cookie ID
+
         Returns:
             Tuple of (has_quota, remaining_uploads)
         """
-        # Get upload count for this month
-        count = await self._get_upload_count_this_month(user_identifier)
-        
+        # Skip quota check in development
+        if settings.environment == "development":
+            return True, -1
+
+        from app.database import get_session, get_upload_count_this_month
+
+        # Check if premium subscriber
+        session_record = await get_session(session_id)
+        if session_record and session_record.status == 'premium':
+            return True, -1  # Unlimited
+
+        # Count uploads this month for free tier
+        count = await get_upload_count_this_month(session_id)
+
         remaining = max(0, self.FREE_TIER_LIMIT - count)
         has_quota = remaining > 0
-        
+
         return has_quota, remaining
-    
-    async def _get_upload_count_this_month(self, user_identifier: str) -> int:
-        """Get number of uploads this month for user."""
-        # Start of current month
-        now = datetime.now(timezone.utc)
-        month_start = datetime(now.year, now.month, 1)
-        
-        async with AsyncSessionLocal() as session:
-            # Note: We don't store user_identifier in database for privacy
-            # For MVP, we use simple rate limiting per IP
-            # In production, implement proper user accounts with auth
-            
-            # For now, return 0 (unlimited) since we don't track users
-            # TODO: Implement proper user tracking with auth
-            return 0
     
     async def create_checkout_session(
         self,
         success_url: str,
         cancel_url: str,
-        customer_email: Optional[str] = None
+        customer_email: Optional[str] = None,
+        client_reference_id: Optional[str] = None
     ) -> str:
         """
         Create Stripe Checkout session for subscription.
-        
+
         Args:
             success_url: URL to redirect after successful payment
             cancel_url: URL to redirect if user cancels
             customer_email: Optional customer email
-            
+            client_reference_id: Session cookie ID for linking payment to session
+
         Returns:
             Checkout session URL
         """
         if not stripe.api_key:
             raise ValueError("Stripe not configured")
-        
+
         try:
             session = stripe.checkout.Session.create(
                 payment_method_types=['card'],
@@ -106,6 +104,7 @@ class PaymentService:
                 success_url=success_url,
                 cancel_url=cancel_url,
                 customer_email=customer_email,
+                client_reference_id=client_reference_id,
                 allow_promotion_codes=True,
             )
             

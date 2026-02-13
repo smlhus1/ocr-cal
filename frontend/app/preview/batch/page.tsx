@@ -1,9 +1,9 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import ShiftTable from '@/components/ShiftTable'
-import { apiClient, Shift, ProcessResponse, ApiError, downloadBlob } from '@/lib/api-client'
+import { apiClient, Shift, ApiError, downloadBlob } from '@/lib/api-client'
 import { sanitizeInput } from '@/lib/validation'
 import { showToast } from '@/components/Toast'
 
@@ -17,12 +17,12 @@ interface FileProcessingState {
   processingTime?: number
 }
 
-export default function BatchPreviewPage() {
+function BatchPreviewContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const idsParam = searchParams.get('ids') || ''
   const method = (searchParams.get('method') || 'ocr') as 'ocr' | 'ai'
-  
+
   const uploadIds = idsParam.split(',').filter(id => id.length > 0)
 
   const [processing, setProcessing] = useState(true)
@@ -30,6 +30,7 @@ export default function BatchPreviewPage() {
   const [allShifts, setAllShifts] = useState<Shift[]>([])
   const [ownerName, setOwnerName] = useState('')
   const [generating, setGenerating] = useState(false)
+  const [hasProcessed, setHasProcessed] = useState(false)
 
   useEffect(() => {
     if (uploadIds.length === 0) {
@@ -37,50 +38,50 @@ export default function BatchPreviewPage() {
       return
     }
 
-    // Initialize file states
-    const initialStates: FileProcessingState[] = uploadIds.map(id => ({
-      uploadId: id,
-      status: 'pending',
-      shifts: [],
-      confidence: 0,
-      warnings: []
-    }))
-    setFileStates(initialStates)
+    if (!hasProcessed) {
+      setHasProcessed(true)
 
-    // Process all files
-    processAllFiles()
-  }, [])
+      // Initialize file states
+      const initialStates: FileProcessingState[] = uploadIds.map(id => ({
+        uploadId: id,
+        status: 'pending',
+        shifts: [],
+        confidence: 0,
+        warnings: []
+      }))
+      setFileStates(initialStates)
+
+      // Process all files
+      processAllFiles()
+    }
+  }, [hasProcessed, uploadIds.length])
 
   const processAllFiles = async () => {
-    console.log(`🚀 [ShiftSync Batch] Prosesserer ${uploadIds.length} filer med metode: ${method.toUpperCase()}`)
-    
+    let totalShiftsCount = 0
+
     // Process each file sequentially to avoid overwhelming the backend
     for (let i = 0; i < uploadIds.length; i++) {
       const uploadId = uploadIds[i]
-      
+
       // Update status to processing
-      setFileStates(prev => prev.map((state, idx) => 
+      setFileStates(prev => prev.map((state, idx) =>
         idx === i ? { ...state, status: 'processing' } : state
       ))
 
       try {
-        console.log(`📋 [ShiftSync] Prosesserer fil ${i + 1}/${uploadIds.length}: ${uploadId}`)
-        
-        const startTime = Date.now()
         const response = await apiClient.process(uploadId, method)
-        const duration = Date.now() - startTime
-        
-        console.log(`✅ [ShiftSync] Fil ${i + 1} fullført: ${response.shifts.length} vakter (${duration}ms)`)
-        
+
+        totalShiftsCount += response.shifts.length
+
         // Update state with success
-        setFileStates(prev => prev.map((state, idx) => 
+        setFileStates(prev => prev.map((state, idx) =>
           idx === i ? {
             ...state,
             status: 'success',
             shifts: response.shifts,
             confidence: response.confidence,
             warnings: response.warnings,
-            processingTime: duration
+            processingTime: Date.now()
           } : state
         ))
 
@@ -88,17 +89,15 @@ export default function BatchPreviewPage() {
         setAllShifts(prev => [...prev, ...response.shifts])
 
       } catch (err) {
-        console.error(`❌ [ShiftSync] Feil i fil ${i + 1}:`, err)
-        
+        console.error(`Processing error for file ${i + 1}:`, err)
+
         let errorMessage = 'Prosessering feilet'
         if (err instanceof ApiError) {
-          console.error(`❌ [ShiftSync] Status: ${err.statusCode}`)
-          console.error(`❌ [ShiftSync] Detaljer: ${err.detail}`)
           errorMessage = err.detail || errorMessage
         }
-        
+
         // Update state with error
-        setFileStates(prev => prev.map((state, idx) => 
+        setFileStates(prev => prev.map((state, idx) =>
           idx === i ? {
             ...state,
             status: 'error',
@@ -109,7 +108,6 @@ export default function BatchPreviewPage() {
     }
 
     setProcessing(false)
-    console.log(`✅ [ShiftSync Batch] Alle filer prosessert. Totalt ${allShifts.length} vakter funnet.`)
   }
 
   const handleShiftsChange = (updatedShifts: Shift[]) => {
@@ -150,7 +148,7 @@ export default function BatchPreviewPage() {
           onClick={() => router.push('/')}
           className="text-sky-600 hover:text-sky-700 mb-4 flex items-center"
         >
-          <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
           </svg>
           Tilbake
@@ -159,30 +157,30 @@ export default function BatchPreviewPage() {
           Batch-prosessering: {uploadIds.length} filer
         </h1>
         <p className="text-gray-600 mt-2">
-          Metode: {method === 'ai' ? '🤖 AI-forbedret (GPT-4 Vision)' : '📝 Standard OCR (Tesseract)'}
+          Metode: {method === 'ai' ? 'AI-forbedret (GPT-4 Vision)' : 'Standard OCR (Tesseract)'}
         </p>
       </div>
 
       {/* Processing Status */}
       {processing && (
-        <div className="bg-white border border-gray-200 rounded-lg p-6 mb-6">
+        <div className="bg-white border border-gray-200 rounded-lg p-6 mb-6" role="status" aria-live="polite">
           <div className="flex items-center mb-4">
-            <svg className="animate-spin h-6 w-6 text-sky-600 mr-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <svg className="animate-spin h-6 w-6 text-sky-600 mr-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
             </svg>
             <h2 className="text-xl font-semibold text-gray-900">Prosesserer filer...</h2>
           </div>
-          
+
           <div className="space-y-2">
             {fileStates.map((state, idx) => (
-              <div key={idx} className="flex items-center justify-between p-3 bg-gray-50 rounded">
+              <div key={state.uploadId} className="flex items-center justify-between p-3 bg-gray-50 rounded">
                 <span className="text-sm text-gray-700">Fil {idx + 1}</span>
                 <span className="text-xs">
-                  {state.status === 'pending' && '⏳ Venter...'}
-                  {state.status === 'processing' && '⚙️ Prosesserer...'}
-                  {state.status === 'success' && `✅ ${state.shifts.length} vakter`}
-                  {state.status === 'error' && `❌ ${state.error}`}
+                  {state.status === 'pending' && 'Venter...'}
+                  {state.status === 'processing' && 'Prosesserer...'}
+                  {state.status === 'success' && `${state.shifts.length} vakter`}
+                  {state.status === 'error' && state.error}
                 </span>
               </div>
             ))}
@@ -242,6 +240,7 @@ export default function BatchPreviewPage() {
                 value={ownerName}
                 onChange={(e) => setOwnerName(e.target.value)}
                 placeholder="Ola Nordmann"
+                maxLength={100}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-sky-500"
               />
             </div>
@@ -252,7 +251,7 @@ export default function BatchPreviewPage() {
             >
               {generating ? (
                 <>
-                  <svg className="animate-spin h-5 w-5 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <svg className="animate-spin h-5 w-5 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true">
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                   </svg>
@@ -260,7 +259,7 @@ export default function BatchPreviewPage() {
                 </>
               ) : (
                 <>
-                  <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                   </svg>
                   Last ned kalender (.ics)
@@ -289,5 +288,25 @@ export default function BatchPreviewPage() {
         </div>
       )}
     </div>
+  )
+}
+
+export default function BatchPreviewPage() {
+  return (
+    <Suspense fallback={
+      <div className="max-w-6xl mx-auto px-4 py-12 sm:px-6 lg:px-8">
+        <div className="text-center" role="status">
+          <div className="inline-flex items-center justify-center w-16 h-16 bg-sky-100 rounded-full mb-4">
+            <svg className="animate-spin h-8 w-8 text-sky-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+          </div>
+          <h2 className="text-2xl font-bold text-gray-900 mb-2">Laster...</h2>
+        </div>
+      </div>
+    }>
+      <BatchPreviewContent />
+    </Suspense>
   )
 }

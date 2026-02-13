@@ -81,10 +81,11 @@ FastAPI application structured as:
 - `main.py` - App factory with middleware stack (CORS, security headers, rate limiting, request timing/audit logging)
 - `config.py` - Pydantic Settings loading from `.env` + optional Azure Key Vault in production
 - `models.py` - Pydantic request/response models (NOT database models)
-- `database.py` - SQLAlchemy async models (`UploadAnalytics`, `FeedbackLog`) + query helpers
+- `database.py` - SQLAlchemy async models (`UploadAnalytics`, `FeedbackLog`, `AnonymousSession`) + query helpers
 - `security.py` - Rate limiter (slowapi), file validation (magic bytes), IP hashing, internal API key verification
 - `api/` - Route handlers: `upload.py`, `process.py`, `download.py`, `feedback.py`, `analytics.py`, `payment.py`
-- `ocr/processor.py` - `VaktplanProcessor` class: Tesseract-based OCR with image preprocessing, Norwegian shift text extraction, iCal generation
+- `ocr/processor.py` - `VaktplanProcessor` class: Tesseract-based OCR with image preprocessing, Norwegian shift text extraction
+- `ocr/calendar_generator.py` - Standalone iCal generation (no Tesseract dependency)
 - `ocr/vision_processor.py` - `VisionProcessor` class: GPT-4o Vision alternative for higher accuracy
 - `ocr/confidence_scorer.py` - Confidence scoring for OCR results
 - `storage/blob_storage.py` - Azure Blob Storage integration
@@ -110,11 +111,22 @@ The API URL is configured via `NEXT_PUBLIC_API_URL` env var.
 
 ### Database
 
-PostgreSQL with only anonymized data (GDPR-compliant):
-- `upload_analytics` - Upload metadata, OCR results, auto-expires after 24h
-- `feedback_log` - Anonymized user corrections for ML improvements
+PostgreSQL with only anonymized data (GDPR-compliant). Managed with **Alembic** migrations (`backend/alembic/`).
 
-No user accounts, no PII stored.
+Tables:
+- `upload_analytics` - Upload metadata, OCR results, session_id, auto-expires after 24h
+- `feedback_log` - Anonymized user corrections for ML improvements
+- `anonymous_sessions` - Session cookie -> Stripe subscription mapping for quota enforcement
+
+No user accounts, no PII stored. Quota tracked via anonymous session cookies.
+
+```powershell
+# Run migrations
+cd backend && alembic upgrade head
+
+# Create new migration
+cd backend && alembic revision -m "description"
+```
 
 ### OCR Text Patterns
 

@@ -7,14 +7,11 @@ services:
     image: postgres:15-alpine
     container_name: shiftsync-db
     environment:
-      POSTGRES_DB: shiftsync
-      POSTGRES_USER: shiftsync_user
-      POSTGRES_PASSWORD: shiftsync_dev_password_change_in_prod
-    ports:
-      - "5433:5432"
+      POSTGRES_DB: ${POSTGRES_DB:-shiftsync}
+      POSTGRES_USER: ${POSTGRES_USER:-shiftsync_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-shiftsync_dev_password_change_in_prod}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./backend/migrations:/docker-entrypoint-initdb.d
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U shiftsync_user -d shiftsync"]
       interval: 10s
@@ -34,7 +31,7 @@ services:
       ENVIRONMENT: development
       
       # Database
-      DATABASE_URL: postgresql://shiftsync_user:shiftsync_dev_password_change_in_prod@db:5432/shiftsync
+      DATABASE_URL: postgresql://${POSTGRES_USER:-shiftsync_user}:${POSTGRES_PASSWORD:-shiftsync_dev_password_change_in_prod}@db:5432/${POSTGRES_DB:-shiftsync}
       
       # Tesseract
       TESSERACT_PATH: /usr/bin/tesseract
@@ -67,7 +64,7 @@ services:
       - ./backend/app:/app/app
       - ./backend/uploads:/app/uploads
     
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    command: bash -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
 
   # Next.js frontend (to be created)
   # frontend:

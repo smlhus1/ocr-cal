@@ -4,8 +4,7 @@ Only stores anonymized metadata - NO personal data.
 """
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base
-from sqlalchemy import Column, String, Integer, Float, Boolean, DateTime, CHAR
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Column, String, Integer, Float, Boolean, DateTime, CHAR, Uuid
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -14,15 +13,20 @@ from app.config import settings
 
 
 # Create async engine with connection pool settings
-engine = create_async_engine(
-    settings.database_url.replace("postgresql://", "postgresql+asyncpg://"),
-    echo=settings.environment == "development",
-    future=True,
-    pool_size=5,
-    max_overflow=10,
-    pool_timeout=30,
-    pool_recycle=1800,
-)
+_db_url = settings.database_url.replace("postgresql://", "postgresql+asyncpg://")
+_engine_kwargs = {
+    "echo": settings.environment == "development",
+    "future": True,
+}
+# Pool settings only apply to connection-pooling backends (not SQLite)
+if not _db_url.startswith("sqlite"):
+    _engine_kwargs.update({
+        "pool_size": 5,
+        "max_overflow": 10,
+        "pool_timeout": 30,
+        "pool_recycle": 1800,
+    })
+engine = create_async_engine(_db_url, **_engine_kwargs)
 
 # Create session factory
 AsyncSessionLocal = async_sessionmaker(
@@ -41,34 +45,51 @@ class UploadAnalytics(Base):
     GDPR-compliant: No personal data, auto-delete after 24h.
     """
     __tablename__ = "upload_analytics"
-    
+
     # Primary key
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id = Column(Uuid, primary_key=True, default=uuid.uuid4)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False, index=True)
-    
+
+    # Session tracking (anonymous cookie, not PII)
+    session_id = Column(String(36), index=True)
+
     # File metadata (anonymized)
     file_format = Column(String(10), nullable=False, index=True)  # 'jpeg', 'png', 'pdf'
     file_size_kb = Column(Integer)
-    
+
     # OCR results (anonymized)
     ocr_engine = Column(String(20))  # 'tesseract', 'azure', etc.
     shifts_found = Column(Integer)
     confidence_score = Column(Float)
     processing_time_ms = Column(Integer)
     success = Column(Boolean, nullable=False)
-    
+
     # Error tracking (no personal data)
     error_type = Column(String(50))
-    
+
     # Geography (country-level only, for stats)
     country_code = Column(CHAR(2))  # ISO 3166-1 alpha-2
-    
+
     # Blob storage reference (for cleanup)
     blob_id = Column(String(100))
     expires_at = Column(DateTime, nullable=False, index=True)
-    
+
     def __repr__(self):
         return f"<UploadAnalytics(id={self.id}, format={self.file_format}, success={self.success})>"
+
+
+class AnonymousSession(Base):
+    """
+    Tracks anonymous browser sessions for quota enforcement.
+    No PII - just a random UUID cookie mapped to subscription status.
+    """
+    __tablename__ = "anonymous_sessions"
+
+    session_id = Column(String(36), primary_key=True)
+    stripe_subscription_id = Column(String(255), nullable=True)
+    status = Column(String(20), nullable=False, default='free')  # 'free', 'premium', 'cancelled'
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
 
 class FeedbackLog(Base):
@@ -78,11 +99,11 @@ class FeedbackLog(Base):
     """
     __tablename__ = "feedback_log"
     
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id = Column(Uuid, primary_key=True, default=uuid.uuid4)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
     
     # Reference to original upload (for correlation)
-    upload_id = Column(UUID(as_uuid=True), nullable=False)
+    upload_id = Column(Uuid, nullable=False)
     
     # Error type
     error_type = Column(String(50), nullable=False)  # 'wrong_date', 'missing_shift', etc.
@@ -207,8 +228,9 @@ async def get_average_confidence(days: int = 7) -> float:
 async def log_upload(
     file_format: str,
     file_size_kb: int,
-    country_code: Optional[str] = None
-) -> UUID:
+    country_code: Optional[str] = None,
+    session_id: Optional[str] = None
+):
     """
     Log upload metadata.
     Returns upload UUID.
@@ -218,29 +240,88 @@ async def log_upload(
             file_format=file_format,
             file_size_kb=file_size_kb,
             country_code=country_code,
+            session_id=session_id,
             success=False,  # Will be updated after processing
             expires_at=datetime.now(timezone.utc) + timedelta(hours=24)
         )
-        
+
         session.add(upload)
         await session.commit()
         await session.refresh(upload)
-        
+
         return upload.id
 
 
+async def get_upload_count_this_month(session_id: str) -> int:
+    """Count uploads this month for a given session."""
+    async with AsyncSessionLocal() as session:
+        from sqlalchemy import select, func
+
+        now = datetime.now(timezone.utc)
+        month_start = datetime(now.year, now.month, 1, tzinfo=timezone.utc)
+
+        stmt = select(func.count(UploadAnalytics.id)).where(
+            UploadAnalytics.session_id == session_id,
+            UploadAnalytics.created_at >= month_start
+        )
+
+        result = await session.execute(stmt)
+        return result.scalar() or 0
+
+
+async def get_session(session_id: str) -> Optional[AnonymousSession]:
+    """Get anonymous session by ID."""
+    async with AsyncSessionLocal() as session:
+        from sqlalchemy import select
+
+        stmt = select(AnonymousSession).where(
+            AnonymousSession.session_id == session_id
+        )
+        result = await session.execute(stmt)
+        return result.scalar_one_or_none()
+
+
+async def upsert_session(
+    session_id: str,
+    stripe_subscription_id: Optional[str] = None,
+    status: str = 'free'
+) -> None:
+    """Create or update anonymous session."""
+    async with AsyncSessionLocal() as session:
+        from sqlalchemy import select
+
+        existing = await session.execute(
+            select(AnonymousSession).where(AnonymousSession.session_id == session_id)
+        )
+        row = existing.scalar_one_or_none()
+
+        if row:
+            row.stripe_subscription_id = stripe_subscription_id
+            row.status = status
+            row.updated_at = datetime.now(timezone.utc)
+        else:
+            session.add(AnonymousSession(
+                session_id=session_id,
+                stripe_subscription_id=stripe_subscription_id,
+                status=status,
+            ))
+
+        await session.commit()
+
+
 async def log_processing_result(
-    upload_id: UUID,
+    upload_id,
     shifts_found: int,
     confidence_score: float,
     processing_time_ms: int,
     success: bool,
-    error_type: Optional[str] = None
+    error_type: Optional[str] = None,
+    ocr_engine: str = "tesseract"
 ):
     """Update upload record with processing results."""
     async with AsyncSessionLocal() as session:
         from sqlalchemy import select, update
-        
+
         stmt = update(UploadAnalytics).where(
             UploadAnalytics.id == upload_id
         ).values(
@@ -249,9 +330,9 @@ async def log_processing_result(
             processing_time_ms=processing_time_ms,
             success=success,
             error_type=error_type,
-            ocr_engine='tesseract'
+            ocr_engine=ocr_engine
         )
-        
+
         await session.execute(stmt)
         await session.commit()
 

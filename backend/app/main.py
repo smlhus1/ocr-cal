@@ -1,8 +1,6 @@
 """
 FastAPI main application with security middleware and routing.
 """
-import logging
-
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
@@ -14,8 +12,6 @@ import time
 from app.config import settings
 from app.security import limiter
 from app.logging_config import setup_logging, setup_sentry, logger
-
-app_logger = logging.getLogger('shiftsync')
 
 # Initialize logging and error tracking
 setup_logging(log_level="DEBUG" if settings.environment == "development" else "INFO")
@@ -31,9 +27,11 @@ app = FastAPI(
     redoc_url="/redoc" if settings.environment != "production" else None
 )
 
-# Add rate limiter
+# Add rate limiter with response headers
+from slowapi.middleware import SlowAPIMiddleware
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
 
 # HTTPS redirect in production
 if settings.environment == "production":
@@ -48,11 +46,37 @@ if settings.environment == "production":
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
-    allow_credentials=False,  # No cookies used
+    allow_credentials=True,  # Required for session cookies
     allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type"],  # Removed Authorization - not used
+    allow_headers=["Content-Type"],
     max_age=3600,
 )
+
+
+# Session cookie middleware
+@app.middleware("http")
+async def session_middleware(request: Request, call_next):
+    """Set anonymous session cookie for quota tracking."""
+    import uuid as _uuid
+    session_id = request.cookies.get("session_id")
+    if not session_id:
+        session_id = str(_uuid.uuid4())
+    request.state.session_id = session_id
+
+    response = await call_next(request)
+
+    # Set cookie if not present (30 days, HttpOnly, SameSite=Lax)
+    if not request.cookies.get("session_id"):
+        response.set_cookie(
+            key="session_id",
+            value=session_id,
+            max_age=30 * 24 * 3600,  # 30 days
+            httponly=True,
+            samesite="lax",
+            secure=settings.environment == "production",
+        )
+
+    return response
 
 
 # Security headers middleware
@@ -60,13 +84,25 @@ app.add_middleware(
 async def add_security_headers(request: Request, call_next):
     """Add security headers to all responses."""
     response = await call_next(request)
-    
+
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-    
+
+    return response
+
+
+# Request ID middleware
+@app.middleware("http")
+async def add_request_id(request: Request, call_next):
+    """Generate or forward X-Request-ID for request tracing."""
+    import uuid
+    request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+    request.state.request_id = request_id
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = request_id
     return response
 
 
@@ -75,26 +111,28 @@ async def add_security_headers(request: Request, call_next):
 async def add_process_time_header(request: Request, call_next):
     """Track request processing time and log for audit."""
     start_time = time.time()
-    
+
     # Get client identifier (hashed IP for privacy)
     from app.security import get_user_identifier
     try:
         client_id = get_user_identifier(request)[:8]
     except Exception:
         client_id = "unknown"
-    
+
+    request_id = getattr(request.state, "request_id", "unknown")
+
     response = await call_next(request)
-    
+
     process_time = (time.time() - start_time) * 1000  # Convert to ms
     response.headers["X-Process-Time-Ms"] = str(int(process_time))
-    
+
     # Audit log (sanitized - no personal data)
     logger.info(
-        f"AUDIT | {request.method} {request.url.path} | "
-        f"client={client_id} | status={response.status_code} | "
-        f"time={int(process_time)}ms"
+        "AUDIT | %s %s | client=%s | request_id=%s | status=%s | time=%dms",
+        request.method, request.url.path, client_id, request_id,
+        response.status_code, int(process_time)
     )
-    
+
     return response
 
 
@@ -102,7 +140,7 @@ async def add_process_time_header(request: Request, call_next):
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     """Catch all unhandled exceptions and return a safe error response."""
-    app_logger.error(f"Unhandled exception on {request.method} {request.url.path}: {exc}")
+    logger.error("Unhandled exception on %s %s: %s", request.method, request.url.path, exc)
     return JSONResponse(
         status_code=500,
         content={"detail": "An internal error occurred. Please try again later."}
@@ -131,7 +169,18 @@ from app.cleanup import start_cleanup_scheduler
 async def startup_event():
     """Initialize background tasks on application startup."""
     logger.info("ShiftSync API starting up...")
-    
+
+    # Create tables if they don't exist (idempotent)
+    from app.database import init_db, AsyncSessionLocal
+    from sqlalchemy import text
+    try:
+        await init_db()
+        async with AsyncSessionLocal() as session:
+            await session.execute(text("SELECT 1"))
+        logger.info("Database connection verified, tables ready")
+    except Exception as e:
+        logger.error("Database connection failed at startup: %s", e)
+
     # Start cleanup scheduler
     if settings.environment == "production":
         start_cleanup_scheduler()

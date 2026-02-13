@@ -11,6 +11,7 @@ from pydantic import BaseModel, field_validator
 
 from app.config import settings
 from app.payment import payment_service
+from app.security import limiter
 
 logger = logging.getLogger('shiftsync')
 
@@ -55,15 +56,22 @@ class CheckoutResponse(BaseModel):
 
 
 @router.post("/create-checkout-session", response_model=CheckoutResponse)
-async def create_checkout_session(request: CreateCheckoutRequest):
+@limiter.limit("5/minute")
+async def create_checkout_session(request: Request, checkout_request: CreateCheckoutRequest):
     """
     Create Stripe checkout session for premium subscription.
+    Passes session_id as client_reference_id so webhooks can link payment to session.
     """
+    session_id = getattr(request.state, 'session_id', None)
+    if not session_id:
+        session_id = request.cookies.get('session_id')
+
     try:
         checkout_url = await payment_service.create_checkout_session(
-            success_url=request.success_url,
-            cancel_url=request.cancel_url,
-            customer_email=request.customer_email
+            success_url=checkout_request.success_url,
+            cancel_url=checkout_request.cancel_url,
+            customer_email=checkout_request.customer_email,
+            client_reference_id=session_id
         )
 
         return CheckoutResponse(checkout_url=checkout_url)
@@ -71,7 +79,7 @@ async def create_checkout_session(request: CreateCheckoutRequest):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error(f"Checkout session creation failed: {e}")
+        logger.error("Checkout session creation failed: %s", e)
         raise HTTPException(status_code=500, detail="Failed to create checkout session")
 
 
@@ -103,29 +111,85 @@ async def stripe_webhook(request: Request):
         logger.warning("Stripe webhook signature verification failed")
         raise HTTPException(status_code=400, detail="Invalid signature")
     except Exception as e:
-        logger.error(f"Stripe webhook error: {e}")
+        logger.error("Stripe webhook error: %s", e)
         raise HTTPException(status_code=400, detail="Webhook verification failed")
 
     # Handle events
     event_type = event.get("type", "")
-    logger.info(f"Stripe webhook received: {event_type}")
+    logger.info("Stripe webhook received: %s", event_type)
 
     if event_type == "checkout.session.completed":
-        logger.info("Checkout session completed")
+        await _handle_checkout_completed(event)
     elif event_type == "customer.subscription.deleted":
-        logger.info("Subscription cancelled")
+        await _handle_subscription_deleted(event)
     elif event_type == "invoice.payment_failed":
-        logger.warning("Invoice payment failed")
+        await _handle_payment_failed(event)
 
     return {"status": "success"}
 
 
-@router.get("/subscription-status/{user_id}")
-async def get_subscription_status(user_id: str):
+async def _handle_checkout_completed(event: dict) -> None:
+    """Handle successful checkout - activate premium for session."""
+    from app.database import upsert_session
+
+    session_data = event.get("data", {}).get("object", {})
+    subscription_id = session_data.get("subscription")
+    # client_reference_id should contain the session_id cookie value
+    client_session_id = session_data.get("client_reference_id")
+
+    if client_session_id and subscription_id:
+        await upsert_session(
+            session_id=client_session_id,
+            stripe_subscription_id=subscription_id,
+            status='premium'
+        )
+        logger.info("Premium activated for session %s", client_session_id[:8])
+    else:
+        logger.warning(
+            "Checkout completed but missing session data: client_ref=%s, sub=%s",
+            client_session_id, subscription_id
+        )
+
+
+async def _handle_subscription_deleted(event: dict) -> None:
+    """Handle subscription cancellation."""
+    from app.database import AsyncSessionLocal, AnonymousSession
+
+    sub_data = event.get("data", {}).get("object", {})
+    subscription_id = sub_data.get("id")
+
+    if not subscription_id:
+        return
+
+    async with AsyncSessionLocal() as session:
+        from sqlalchemy import select, update
+        stmt = update(AnonymousSession).where(
+            AnonymousSession.stripe_subscription_id == subscription_id
+        ).values(status='cancelled')
+        await session.execute(stmt)
+        await session.commit()
+
+    logger.info("Subscription %s cancelled", subscription_id)
+
+
+async def _handle_payment_failed(event: dict) -> None:
+    """Handle failed payment - log warning."""
+    sub_data = event.get("data", {}).get("object", {})
+    subscription_id = sub_data.get("subscription")
+    logger.warning("Payment failed for subscription %s", subscription_id)
+
+
+@router.get("/subscription-status")
+@limiter.limit("10/minute")
+async def get_subscription_status(request: Request):
     """
-    Get subscription status for user.
+    Get subscription status for current session.
+    Session is identified from session cookie.
     """
-    has_quota, remaining = await payment_service.check_quota(user_id)
+    session_id = getattr(request.state, 'session_id', None)
+    if not session_id:
+        session_id = request.cookies.get('session_id', 'unknown')
+    has_quota, remaining = await payment_service.check_quota(session_id)
 
     return {
         "has_quota": has_quota,

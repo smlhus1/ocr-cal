@@ -2,18 +2,23 @@
 Feedback endpoint for user-reported corrections.
 Enables smart learning from anonymized data.
 """
-from fastapi import APIRouter, HTTPException
+import logging
+
+from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy import insert
 
 from app.models import FeedbackRequest
 from app.database import AsyncSessionLocal, FeedbackLog
+from app.security import limiter
 
+logger = logging.getLogger('shiftsync')
 
 router = APIRouter()
 
 
 @router.post("/feedback")
-async def report_feedback(request: FeedbackRequest):
+@limiter.limit("5/minute")
+async def report_feedback(request: Request, feedback: FeedbackRequest):
     """
     Report feedback on OCR results.
     
@@ -32,19 +37,19 @@ async def report_feedback(request: FeedbackRequest):
     try:
         # Anonymize correction data (remove any potential personal info)
         correction_pattern = None
-        if request.correction_data:
+        if feedback.correction_data:
             # Extract pattern without personal data
             # Example: {"wrong_format": "DD/MM/YYYY", "expected": "DD.MM.YYYY"}
-            correction_pattern = _anonymize_correction(request.correction_data)
-        
+            correction_pattern = _anonymize_correction(feedback.correction_data)
+
         # Store in database
         async with AsyncSessionLocal() as session:
-            feedback = FeedbackLog(
-                upload_id=request.upload_id,
-                error_type=request.error_type,
+            feedback_log = FeedbackLog(
+                upload_id=feedback.upload_id,
+                error_type=feedback.error_type,
                 correction_pattern=correction_pattern
             )
-            session.add(feedback)
+            session.add(feedback_log)
             await session.commit()
         
         return {
@@ -53,9 +58,10 @@ async def report_feedback(request: FeedbackRequest):
         }
         
     except Exception as e:
+        logger.error("Could not record feedback: %s", e)
         raise HTTPException(
             status_code=500,
-            detail=f"Could not record feedback: {str(e)}"
+            detail="Could not record feedback. Please try again later."
         )
 
 

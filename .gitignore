@@ -78,6 +78,7 @@ Thumbs.db
 desktop.ini
 
 # Docker (keep .dockerignore in repo)
+docker-compose.override.yml
 
 # Logs
 *.log

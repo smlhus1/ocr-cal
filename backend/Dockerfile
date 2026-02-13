@@ -1,17 +1,14 @@
 # Multi-stage build for ShiftSync Backend
 # Optimized for production with security best practices
 
-FROM python:3.11-slim as base
+FROM python:3.11.11-slim as base
 
-# Install system dependencies including Tesseract OCR and ClamAV
+# Install system dependencies including Tesseract OCR
 RUN apt-get update && apt-get install -y \
     tesseract-ocr \
     tesseract-ocr-nor \
     libmagic1 \
-    clamav \
-    clamav-daemon \
-    && rm -rf /var/lib/apt/lists/* \
-    && freshclam || true
+    && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
 WORKDIR /app

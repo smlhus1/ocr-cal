@@ -45,7 +45,7 @@ export default function DragDropUpload({
     }
 
     setUploading(true)
-    
+
     // Initialize file states
     const initialStates: FileUploadState[] = acceptedFiles.map(file => ({
       file,
@@ -58,31 +58,31 @@ export default function DragDropUpload({
     const uploadPromises = acceptedFiles.map(async (file, index) => {
       try {
         // Update status to uploading
-        setFileStates(prev => prev.map((state, i) => 
+        setFileStates(prev => prev.map((state, i) =>
           i === index ? { ...state, status: 'uploading', progress: 10 } : state
         ))
 
         // Client-side validation: file signature
         const arrayBuffer = await file.arrayBuffer()
         const isValid = await validateFileSignature(arrayBuffer, file.type)
-        
+
         if (!isValid) {
           throw new Error('Ugyldig filtype')
         }
 
-        setFileStates(prev => prev.map((state, i) => 
+        setFileStates(prev => prev.map((state, i) =>
           i === index ? { ...state, progress: 30 } : state
         ))
 
         // Upload to backend
         const response = await apiClient.upload(file)
-        
-        setFileStates(prev => prev.map((state, i) => 
-          i === index ? { 
-            ...state, 
-            progress: 100, 
+
+        setFileStates(prev => prev.map((state, i) =>
+          i === index ? {
+            ...state,
+            progress: 100,
             status: 'success',
-            uploadId: response.upload_id 
+            uploadId: response.upload_id
           } : state
         ))
 
@@ -90,19 +90,19 @@ export default function DragDropUpload({
 
       } catch (error) {
         console.error(`Upload error for ${file.name}:`, error)
-        
+
         let errorMessage = 'Opplasting feilet'
         if (error instanceof ApiError) {
           if (error.statusCode === 413) errorMessage = 'For stor (maks 10MB)'
           else if (error.statusCode === 400) errorMessage = 'Ugyldig fil'
-          else if (error.statusCode === 429) errorMessage = 'For mange forespørsler'
-          else if (error.statusCode === 402) errorMessage = 'Quota overskredet'
+          else if (error.statusCode === 429) errorMessage = 'For mange forespørsler, vent litt'
+          else if (error.statusCode === 402) errorMessage = 'Du har brukt opp gratiskvoten (2 per mnd). Oppgrader til Premium for ubegrenset bruk.'
           else errorMessage = error.detail || errorMessage
         } else {
           errorMessage = (error as Error).message || errorMessage
         }
-        
-        setFileStates(prev => prev.map((state, i) => 
+
+        setFileStates(prev => prev.map((state, i) =>
           i === index ? { ...state, status: 'error', error: errorMessage } : state
         ))
 
@@ -112,16 +112,15 @@ export default function DragDropUpload({
 
     // Vent på at alle er ferdige
     const results = await Promise.all(uploadPromises)
-    
+
     setUploading(false)
 
     // Samle alle vellykkede upload IDs
     const successfulUploads = results
       .filter(r => r.success && r.uploadId)
       .map(r => r.uploadId!)
-    
+
     if (successfulUploads.length > 0) {
-      console.log(`✅ ${successfulUploads.length} filer lastet opp:`, successfulUploads)
       setTimeout(() => {
         onUploadSuccess(successfulUploads, method)
       }, 500)
@@ -134,27 +133,29 @@ export default function DragDropUpload({
     onDrop,
     accept: ALLOWED_TYPES,
     maxSize: MAX_FILE_SIZE,
-    maxFiles: 10,  // Opptil 10 filer samtidig
+    maxFiles: 10,
     disabled: disabled || uploading,
-    multiple: true  // Tillat flere filer
+    multiple: true
   })
 
   return (
     <div className="w-full space-y-4">
       {/* Method Selector */}
       <div className="bg-white border border-gray-200 rounded-lg p-4">
-        <label className="block text-sm font-medium text-gray-700 mb-3">
+        <label id="method-label" className="block text-sm font-medium text-gray-700 mb-3">
           Velg prosesseringsmetode:
         </label>
-        <div className="grid grid-cols-2 gap-4">
+        <div role="radiogroup" aria-labelledby="method-label" className="grid grid-cols-2 gap-4">
           <button
             type="button"
+            role="radio"
+            aria-checked={method === 'ocr'}
             onClick={() => setMethod('ocr')}
             disabled={uploading}
             className={`
               relative flex flex-col items-center justify-center p-4 rounded-lg border-2 transition-all
-              ${method === 'ocr' 
-                ? 'border-sky-500 bg-sky-50 shadow-sm' 
+              ${method === 'ocr'
+                ? 'border-sky-500 bg-sky-50 shadow-sm'
                 : 'border-gray-200 bg-white hover:border-gray-300'
               }
               ${uploading ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
@@ -162,26 +163,29 @@ export default function DragDropUpload({
           >
             {method === 'ocr' && (
               <div className="absolute top-2 right-2">
-                <svg className="w-5 h-5 text-sky-600" fill="currentColor" viewBox="0 0 20 20">
+                <svg className="w-5 h-5 text-sky-600" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true">
                   <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
                 </svg>
               </div>
             )}
-            <svg className="w-8 h-8 mb-2 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-8 h-8 mb-2 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
             </svg>
             <span className="font-medium text-gray-900">Standard OCR</span>
-            <span className="text-xs text-gray-500 mt-1">Gratis • Tesseract</span>
+            <span className="text-xs text-green-600 font-medium mt-1">Gratis</span>
+            <span className="text-xs text-gray-400 mt-0.5">Tesseract</span>
           </button>
-          
+
           <button
             type="button"
+            role="radio"
+            aria-checked={method === 'ai'}
             onClick={() => setMethod('ai')}
             disabled={uploading}
             className={`
               relative flex flex-col items-center justify-center p-4 rounded-lg border-2 transition-all
-              ${method === 'ai' 
-                ? 'border-purple-500 bg-purple-50 shadow-sm' 
+              ${method === 'ai'
+                ? 'border-purple-500 bg-purple-50 shadow-sm'
                 : 'border-gray-200 bg-white hover:border-gray-300'
               }
               ${uploading ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
@@ -189,45 +193,51 @@ export default function DragDropUpload({
           >
             {method === 'ai' && (
               <div className="absolute top-2 right-2">
-                <svg className="w-5 h-5 text-purple-600" fill="currentColor" viewBox="0 0 20 20">
+                <svg className="w-5 h-5 text-purple-600" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true">
                   <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
                 </svg>
               </div>
             )}
-            <svg className="w-8 h-8 mb-2 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-8 h-8 mb-2 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
             </svg>
             <span className="font-medium text-gray-900">AI-forbedret</span>
-            <span className="text-xs text-gray-500 mt-1">GPT-4 Vision • Høyere nøyaktighet</span>
+            <span className="text-xs text-purple-600 font-medium mt-1">Premium</span>
+            <span className="text-xs text-gray-400 mt-0.5">GPT-4 Vision - Høyere nøyaktighet</span>
           </button>
         </div>
       </div>
-      
+
       {/* Upload Area */}
       <div
-        {...getRootProps()}
+        {...getRootProps({
+          role: 'button' as const,
+          'aria-label': uploading
+            ? `Laster opp ${fileStates.length} filer`
+            : 'Last opp filer. Klikk eller dra filer hit. Støtter JPG, PNG og PDF, maks 10MB per fil, opptil 10 filer.',
+        })}
         className={`
           border-2 border-dashed rounded-lg p-12 text-center cursor-pointer
           transition-colors duration-200
-          ${isDragActive 
-            ? 'border-sky-500 bg-sky-50' 
+          ${isDragActive
+            ? 'border-sky-500 bg-sky-50'
             : 'border-gray-300 bg-white hover:border-sky-400 hover:bg-gray-50'
           }
           ${(disabled || uploading) && 'opacity-50 cursor-not-allowed'}
         `}
       >
-        <input {...getInputProps()} />
-        
+        <input {...getInputProps({ 'aria-label': 'Velg filer for opplasting' })} />
+
         {uploading ? (
-          <div className="space-y-3">
+          <div className="space-y-3" role="status" aria-live="polite">
             <div className="inline-flex items-center justify-center w-12 h-12 bg-sky-100 rounded-full mb-2">
-              <svg className="animate-spin h-6 w-6 text-sky-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <svg className="animate-spin h-6 w-6 text-sky-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
               </svg>
             </div>
             <p className="text-lg font-medium text-gray-900">Laster opp {fileStates.length} fil(er)...</p>
-            
+
             {/* Progress for hver fil */}
             <div className="space-y-2 max-w-2xl mx-auto text-left">
               {fileStates.map((fileState, index) => (
@@ -239,7 +249,7 @@ export default function DragDropUpload({
                     <span className="text-xs text-gray-500 ml-2">
                       {fileState.status === 'success' && (
                         <span className="text-green-600 flex items-center">
-                          <svg className="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                          <svg className="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true">
                             <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
                           </svg>
                           Ferdig
@@ -254,9 +264,14 @@ export default function DragDropUpload({
                   </div>
                   {(fileState.status === 'uploading' || fileState.status === 'pending') && (
                     <div className="w-full bg-gray-200 rounded-full h-1.5">
-                      <div 
+                      <div
                         className="bg-sky-600 h-1.5 rounded-full transition-all duration-300"
                         style={{ width: `${fileState.progress}%` }}
+                        role="progressbar"
+                        aria-valuenow={fileState.progress}
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-label={`Opplasting av ${fileState.file.name}`}
                       ></div>
                     </div>
                   )}
@@ -267,11 +282,11 @@ export default function DragDropUpload({
         ) : (
           <>
             <div className="inline-flex items-center justify-center w-16 h-16 bg-sky-100 rounded-full mb-4">
-              <svg className="w-8 h-8 text-sky-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-8 h-8 text-sky-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
               </svg>
             </div>
-            
+
             {isDragActive ? (
               <p className="text-lg font-medium text-sky-600">
                 Slipp filene her...
@@ -282,14 +297,14 @@ export default function DragDropUpload({
                   Dra vaktplaner hit, eller klikk for å velge filer
                 </p>
                 <p className="text-sm text-gray-500 mb-4">
-                  Støtter JPG, PNG og PDF • Maks 10MB per fil • Opptil 10 filer samtidig
+                  Støtter JPG, PNG og PDF - Maks 10MB per fil - Opptil 10 filer samtidig
                 </p>
-                <button
-                  type="button"
-                  className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-sky-600 hover:bg-sky-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-sky-500"
+                <span
+                  className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-sky-600 hover:bg-sky-700"
+                  aria-hidden="true"
                 >
                   Velg filer
-                </button>
+                </span>
               </>
             )}
           </>
@@ -298,7 +313,7 @@ export default function DragDropUpload({
 
       {/* File rejection errors */}
       {fileRejections.length > 0 && (
-        <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+        <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg" role="alert">
           <p className="text-sm font-medium text-red-800 mb-1">Noen filer ble avvist:</p>
           <ul className="text-sm text-red-600 list-disc list-inside space-y-1">
             {fileRejections.map((rejection, idx) => (
@@ -318,4 +333,3 @@ export default function DragDropUpload({
     </div>
   )
 }
-

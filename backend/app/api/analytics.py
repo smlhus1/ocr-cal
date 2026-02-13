@@ -2,7 +2,11 @@
 Internal analytics endpoint (requires API key).
 For monitoring and insights into OCR performance.
 """
-from fastapi import APIRouter, HTTPException, Depends
+import logging
+import secrets
+import sys
+
+from fastapi import APIRouter, HTTPException, Depends, Query
 from fastapi.security import APIKeyHeader
 from typing import Optional
 
@@ -12,6 +16,8 @@ from app.database import (
     get_format_distribution,
     get_average_confidence
 )
+
+logger = logging.getLogger('shiftsync')
 
 
 router = APIRouter()
@@ -40,7 +46,6 @@ async def verify_api_key(api_key: Optional[str] = Depends(api_key_header)):
         )
     
     # Constant-time comparison to prevent timing attacks
-    import secrets
     if not secrets.compare_digest(api_key, expected_key):
         raise HTTPException(
             status_code=403,
@@ -52,7 +57,7 @@ async def verify_api_key(api_key: Optional[str] = Depends(api_key_header)):
 
 @router.get("/analytics")
 async def get_analytics(
-    days: int = 7,
+    days: int = Query(default=7, ge=1, le=365),
     authorized: bool = Depends(verify_api_key)
 ):
     """
@@ -86,8 +91,7 @@ async def get_analytics(
         }
         
     except Exception as e:
-        import logging
-        logging.getLogger('shiftsync').error(f"Analytics query failed: {e}")
+        logger.error("Analytics query failed: %s", e)
         raise HTTPException(
             status_code=500,
             detail="Analytics query failed"
@@ -104,26 +108,31 @@ async def health_check_detailed(authorized: bool = Depends(verify_api_key)):
     Returns:
         System health metrics
     """
-    import psutil
-    import sys
-    
     try:
-        return {
+        import psutil
+        system_info = {
+            "cpu_percent": psutil.cpu_percent(interval=1),
+            "memory_percent": psutil.virtual_memory().percent,
+            "disk_percent": psutil.disk_usage('/').percent
+        }
+    except ImportError:
+        logger.warning("psutil not installed - system metrics unavailable")
+        system_info = None
+
+    try:
+        result = {
             "status": "healthy",
             "environment": settings.environment,
             "python_version": sys.version.split()[0],
             "tesseract_configured": settings.tesseract_path is not None,
             "database_configured": settings.database_url is not None,
             "storage_configured": settings.azure_storage_connection_string is not None,
-            "system": {
-                "cpu_percent": psutil.cpu_percent(interval=1),
-                "memory_percent": psutil.virtual_memory().percent,
-                "disk_percent": psutil.disk_usage('/').percent
-            }
         }
+        if system_info:
+            result["system"] = system_info
+        return result
     except Exception as e:
-        import logging
-        logging.getLogger('shiftsync').error(f"Health check failed: {e}")
+        logger.error("Health check failed: %s", e)
         return {
             "status": "degraded",
             "error": "System check failed"

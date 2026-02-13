@@ -1,9 +1,16 @@
+const { withSentryConfig } = require("@sentry/nextjs");
+
+const isDev = process.env.NODE_ENV !== 'production';
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  
+
   // Security headers
   async headers() {
+    // Skip CSP in dev - Next.js hot-reload needs unsafe-eval and inline scripts
+    if (isDev) return [];
+
     return [
       {
         source: '/:path*',
@@ -12,11 +19,11 @@ const nextConfig = {
             key: 'Content-Security-Policy',
             value: [
               "default-src 'self'",
-              "script-src 'self' 'unsafe-inline'",
+              "script-src 'self' https://*.sentry.io",
               "style-src 'self' 'unsafe-inline'",
               "img-src 'self' data: blob:",
               "font-src 'self'",
-              "connect-src 'self' http://localhost:8000 https://api.shiftsync.no",
+              "connect-src 'self' http://localhost:8000 https://api.shiftsync.no https://*.ingest.sentry.io",
               "frame-ancestors 'none'",
             ].join('; ')
           },
@@ -51,5 +58,12 @@ const nextConfig = {
   }
 };
 
-module.exports = nextConfig;
+module.exports = process.env.SENTRY_AUTH_TOKEN
+  ? withSentryConfig(nextConfig, {
+      org: "shiftsync",
+      project: "shiftsync-frontend",
+      silent: true,
+      hideSourceMaps: true,
+    })
+  : nextConfig;
 

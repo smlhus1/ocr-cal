@@ -1,13 +1,16 @@
 """
 Tests for OCR processing pipeline.
 """
+import pytest
+from pydantic import ValidationError
+
 from app.ocr.confidence_scorer import (
     calculate_confidence,
     validate_shift,
     assign_individual_confidences,
     generate_warnings,
 )
-from app.ocr.processor import Shift
+from app.models import Shift
 
 
 class TestValidateShift:
@@ -23,17 +26,19 @@ class TestValidateShift:
         )
         assert validate_shift(shift) is True
 
-    def test_invalid_date_format(self):
-        shift = Shift(
-            date="2025-12-01",
-            start_time="07:00",
-            end_time="15:00",
-            shift_type="tidlig",
-            confidence=0.9
-        )
-        assert validate_shift(shift) is False
+    def test_invalid_date_format_rejected_by_pydantic(self):
+        """Pydantic now rejects invalid date formats at construction."""
+        with pytest.raises(ValidationError):
+            Shift(
+                date="2025-12-01",
+                start_time="07:00",
+                end_time="15:00",
+                shift_type="tidlig",
+                confidence=0.9
+            )
 
     def test_invalid_time(self):
+        """25:00 matches HH:MM pattern but validate_shift catches invalid hour."""
         shift = Shift(
             date="01.12.2025",
             start_time="25:00",
@@ -43,15 +48,16 @@ class TestValidateShift:
         )
         assert validate_shift(shift) is False
 
-    def test_invalid_shift_type(self):
-        shift = Shift(
-            date="01.12.2025",
-            start_time="07:00",
-            end_time="15:00",
-            shift_type="invalid",
-            confidence=0.9
-        )
-        assert validate_shift(shift) is False
+    def test_invalid_shift_type_rejected_by_pydantic(self):
+        """Pydantic now rejects invalid shift types at construction."""
+        with pytest.raises(ValidationError):
+            Shift(
+                date="01.12.2025",
+                start_time="07:00",
+                end_time="15:00",
+                shift_type="invalid",
+                confidence=0.9
+            )
 
 
 class TestConfidenceScoring:

@@ -3,8 +3,9 @@ Confidence scoring for OCR results.
 Calculates reliability score based on multiple factors.
 """
 import re
+from datetime import datetime
 from typing import List
-from app.ocr.processor import Shift
+from app.models import Shift
 
 
 def calculate_confidence(ocr_text: str, extracted_shifts: List[Shift]) -> float:
@@ -68,7 +69,8 @@ def validate_shift(shift: Shift) -> bool:
             return False
         
         day, month, year = map(int, parts)
-        if not (1 <= day <= 31 and 1 <= month <= 12 and 2020 <= year <= 2030):
+        current_year = datetime.now().year
+        if not (1 <= day <= 31 and 1 <= month <= 12 and current_year - 2 <= year <= current_year + 5):
             return False
         
         # Validate time format (HH:MM)
@@ -119,21 +121,24 @@ def assign_individual_confidences(shifts: List[Shift], ocr_text: str) -> List[Sh
         if shift.date.replace('.', '') in ocr_text.replace(' ', ''):
             conf += 0.1
         
-        # Increase if time pattern is clear
-        time_pattern = f"{shift.start_time}.*{shift.end_time}"
+        # Increase if time pattern is clearly visible in text
+        time_pattern = rf"{re.escape(shift.start_time)}\s*-\s*{re.escape(shift.end_time)}"
         if re.search(time_pattern, ocr_text):
             conf += 0.1
         
-        # Decrease if odd hour combinations
-        start_hour = int(shift.start_time.split(':')[0])
-        end_hour = int(shift.end_time.split(':')[0])
-        
+        # Decrease if odd duration (uses minutes for accuracy)
+        start_parts = shift.start_time.split(':')
+        end_parts = shift.end_time.split(':')
+        start_total = int(start_parts[0]) * 60 + int(start_parts[1])
+        end_total = int(end_parts[0]) * 60 + int(end_parts[1])
+        duration_hours = ((end_total - start_total) % (24 * 60)) / 60
+
         # Very short shift (< 4 hours) - lower confidence
-        if 0 < (end_hour - start_hour) % 24 < 4:
+        if 0 < duration_hours < 4:
             conf -= 0.1
-        
+
         # Very long shift (> 12 hours) - lower confidence
-        if (end_hour - start_hour) % 24 > 12:
+        if duration_hours > 12:
             conf -= 0.1
         
         shift.confidence = min(max(conf, 0.0), 1.0)
@@ -168,22 +173,35 @@ def generate_warnings(shifts: List[Shift], overall_confidence: float) -> List[st
             "Disse er markert med gul bakgrunn."
         )
     
-    # Suspicious patterns
+    # Suspicious patterns (limit to avoid flooding)
+    max_shift_warnings = 5
+    shift_warning_count = 0
+    suspicious_total = 0
     for shift in shifts:
-        start_hour = int(shift.start_time.split(':')[0])
-        end_hour = int(shift.end_time.split(':')[0])
-        duration = (end_hour - start_hour) % 24
-        
-        if duration < 4:
-            warnings.append(
-                f"Vakt {shift.date} virker veldig kort ({duration} timer). "
-                "Sjekk at tidene er korrekte."
-            )
-        elif duration > 12:
-            warnings.append(
-                f"Vakt {shift.date} virker veldig lang ({duration} timer). "
-                "Sjekk at tidene er korrekte."
-            )
-    
+        sp = shift.start_time.split(':')
+        ep = shift.end_time.split(':')
+        duration_mins = (int(ep[0]) * 60 + int(ep[1]) - int(sp[0]) * 60 - int(sp[1])) % (24 * 60)
+        duration = round(duration_mins / 60, 1)
+
+        is_suspicious = (0 < duration < 4) or (duration > 12)
+        if is_suspicious:
+            suspicious_total += 1
+            if shift_warning_count < max_shift_warnings:
+                shift_warning_count += 1
+                if duration < 4:
+                    warnings.append(
+                        f"Vakt {shift.date} virker veldig kort ({duration} timer). "
+                        "Sjekk at tidene er korrekte."
+                    )
+                else:
+                    warnings.append(
+                        f"Vakt {shift.date} virker veldig lang ({duration} timer). "
+                        "Sjekk at tidene er korrekte."
+                    )
+
+    remaining = suspicious_total - shift_warning_count
+    if remaining > 0:
+        warnings.append(f"...og {remaining} andre vakt(er) med uvanlig varighet.")
+
     return warnings
 

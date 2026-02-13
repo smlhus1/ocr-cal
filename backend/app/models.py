@@ -6,10 +6,21 @@ from typing import Literal, List, Optional
 from datetime import datetime
 
 
-class UploadRequest(BaseModel):
-    """Validation for file upload metadata."""
-    file_size: int = Field(..., gt=0, le=10_000_000, description="File size in bytes (max 10MB)")
-    file_type: Literal["image/jpeg", "image/png", "application/pdf"]
+# Shared constants for MIME types and file extensions
+ALLOWED_MIME_TYPES = ["image/jpeg", "image/png", "application/pdf"]
+
+MIME_TO_EXTENSION = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "application/pdf": ".pdf",
+}
+
+EXTENSION_TO_MIME = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".pdf": "application/pdf",
+}
 
 
 class UploadResponse(BaseModel):
@@ -49,7 +60,8 @@ class Shift(BaseModel):
         if len(parts) != 3:
             raise ValueError('Date must be in DD.MM.YYYY format')
         day, month, year = map(int, parts)
-        if not (1 <= day <= 31 and 1 <= month <= 12 and 2020 <= year <= 2030):
+        current_year = datetime.now().year
+        if not (1 <= day <= 31 and 1 <= month <= 12 and current_year - 2 <= year <= current_year + 5):
             raise ValueError('Invalid date values')
         return v
 

@@ -43,11 +43,13 @@ async def upload_file(request: Request, file: UploadFile = File(...)):
         402: Quota exceeded
         429: Rate limit exceeded
     """
-    # Check quota (free tier enforcement)
+    # Check quota (free tier enforcement via session cookie)
     from app.payment import payment_service
-    
-    user_id = get_user_identifier(request)
-    has_quota, remaining = await payment_service.check_quota(user_id)
+
+    session_id = getattr(request.state, 'session_id', None)
+    if not session_id:
+        session_id = request.cookies.get('session_id', 'unknown')
+    has_quota, remaining = await payment_service.check_quota(session_id)
     
     if not has_quota:
         # Create checkout session for upgrade
@@ -68,21 +70,17 @@ async def upload_file(request: Request, file: UploadFile = File(...)):
             }
         )
     
-    # Validate file
+    # Validate file (returns content to avoid double-read)
     try:
-        await validate_file(file)
+        file_content = await validate_file(file)
     except HTTPException as e:
         raise e
     except Exception as e:
-        logger.warning(f"File validation failed: {e}")
+        logger.warning("File validation failed: %s", e)
         raise HTTPException(status_code=400, detail="File validation failed")
-    
+
     # Generate upload ID
     upload_id = str(uuid.uuid4())
-    
-    # Read file content
-    file_content = await file.read()
-    await file.seek(0)
     
     # Upload to storage
     try:
@@ -92,7 +90,7 @@ async def upload_file(request: Request, file: UploadFile = File(...)):
             content_type=file.content_type or "application/octet-stream"
         )
     except Exception as e:
-        logger.error(f"Storage upload failed: {e}")
+        logger.error("Storage upload failed: %s", e)
         raise HTTPException(status_code=500, detail="Storage upload failed")
     
     # Scan for malware (after upload, before processing)
@@ -110,7 +108,7 @@ async def upload_file(request: Request, file: UploadFile = File(...)):
         raise
     except Exception as e:
         # Log but don't fail - malware scanning is best-effort in development
-        logger.warning(f"Malware scan skipped: {e}")
+        logger.warning("Malware scan skipped: %s", e)
     
     # Log to database (anonymized)
     file_size_kb = len(file_content) // 1024
@@ -121,10 +119,11 @@ async def upload_file(request: Request, file: UploadFile = File(...)):
         await log_upload(
             file_format=file_format,
             file_size_kb=file_size_kb,
-            country_code=country
+            country_code=country,
+            session_id=session_id
         )
     except Exception as e:
-        logger.warning(f"Could not log upload to database: {e}")
+        logger.warning("Could not log upload to database: %s", e)
     
     # Return response
     expires_at = datetime.now(timezone.utc) + timedelta(hours=24)

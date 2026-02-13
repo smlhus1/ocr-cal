@@ -9,16 +9,27 @@ interface ShiftTableProps {
   onShiftsChange: (shifts: Shift[]) => void
 }
 
+function ensureIds(shifts: Shift[]): Shift[] {
+  return shifts.map(s => s.id ? s : { ...s, id: crypto.randomUUID() })
+}
+
 export default function ShiftTable({ initialShifts, onShiftsChange }: ShiftTableProps) {
-  const [shifts, setShifts] = useState<Shift[]>(initialShifts)
-  const [editingIndex, setEditingIndex] = useState<number | null>(null)
+  const [shifts, setShifts] = useState<Shift[]>(() => ensureIds(initialShifts))
 
   // Sync internal state when props change (critical for batch mode)
   useEffect(() => {
-    setShifts(initialShifts)
+    setShifts(ensureIds(initialShifts))
   }, [initialShifts])
 
   const updateShift = (index: number, field: keyof Shift, value: string) => {
+    // Validate date format (DD.MM.YYYY)
+    if (field === 'date' && value && !/^\d{0,2}\.?\d{0,2}\.?\d{0,4}$/.test(value)) {
+      return
+    }
+    // Validate time format (HH:MM)
+    if ((field === 'start_time' || field === 'end_time') && value && !/^\d{2}:\d{2}$/.test(value)) {
+      return
+    }
     const newShifts = [...shifts]
     newShifts[index] = { ...newShifts[index], [field]: value }
     setShifts(newShifts)
@@ -33,6 +44,7 @@ export default function ShiftTable({ initialShifts, onShiftsChange }: ShiftTable
 
   const addShift = () => {
     const newShift: Shift = {
+      id: crypto.randomUUID(),
       date: new Date().toLocaleDateString('no-NO', {
         day: '2-digit',
         month: '2-digit',
@@ -46,7 +58,6 @@ export default function ShiftTable({ initialShifts, onShiftsChange }: ShiftTable
     const newShifts = [...shifts, newShift]
     setShifts(newShifts)
     onShiftsChange(newShifts)
-    setEditingIndex(newShifts.length - 1)
   }
 
   return (
@@ -54,6 +65,7 @@ export default function ShiftTable({ initialShifts, onShiftsChange }: ShiftTable
       {/* Desktop table */}
       <div className="hidden md:block overflow-x-auto">
         <table className="min-w-full divide-y divide-gray-200">
+          <caption className="sr-only">Oversikt over gjenkjente vakter med mulighet for redigering</caption>
           <thead className="bg-gray-50">
             <tr>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -79,7 +91,7 @@ export default function ShiftTable({ initialShifts, onShiftsChange }: ShiftTable
           <tbody className="bg-white divide-y divide-gray-200">
             {shifts.map((shift, idx) => (
               <tr
-                key={idx}
+                key={shift.id}
                 className={`
                   ${shift.confidence < 0.6 ? 'bg-yellow-50' : shift.confidence < 0.8 ? 'bg-blue-50' : ''}
                   hover:bg-gray-50 transition-colors
@@ -132,7 +144,7 @@ export default function ShiftTable({ initialShifts, onShiftsChange }: ShiftTable
                 <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                   <button
                     onClick={() => deleteShift(idx)}
-                    className="text-red-600 hover:text-red-900 focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 rounded"
+                    className="text-red-600 hover:text-red-900 focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 rounded px-2 py-2 min-h-[44px] min-w-[44px] inline-flex items-center justify-center"
                     aria-label={`Slett vakt ${idx + 1} (${shift.date})`}
                   >
                     Slett
@@ -148,7 +160,7 @@ export default function ShiftTable({ initialShifts, onShiftsChange }: ShiftTable
       <div className="md:hidden space-y-4">
         {shifts.map((shift, idx) => (
           <div
-            key={idx}
+            key={shift.id}
             className={`
               border rounded-lg p-4
               ${shift.confidence < 0.6 ? 'bg-yellow-50 border-yellow-200' : shift.confidence < 0.8 ? 'bg-blue-50 border-blue-200' : 'bg-white border-gray-200'}
@@ -158,7 +170,7 @@ export default function ShiftTable({ initialShifts, onShiftsChange }: ShiftTable
               <ConfidenceIndicator score={shift.confidence} />
               <button
                 onClick={() => deleteShift(idx)}
-                className="text-red-600 hover:text-red-900 text-sm focus-visible:ring-2 focus-visible:ring-red-500 rounded"
+                className="text-red-600 hover:text-red-900 text-sm focus-visible:ring-2 focus-visible:ring-red-500 rounded px-2 py-2 min-h-[44px] min-w-[44px] inline-flex items-center justify-center"
                 aria-label={`Slett vakt ${idx + 1} (${shift.date})`}
               >
                 Slett
@@ -167,9 +179,9 @@ export default function ShiftTable({ initialShifts, onShiftsChange }: ShiftTable
 
             <div className="space-y-2">
               <div>
-                <label htmlFor={`mobile-date-${idx}`} className="text-xs text-gray-500">Dato</label>
+                <label htmlFor={`mobile-date-${shift.id}`} className="text-xs text-gray-500">Dato</label>
                 <input
-                  id={`mobile-date-${idx}`}
+                  id={`mobile-date-${shift.id}`}
                   type="text"
                   value={shift.date}
                   onChange={(e) => updateShift(idx, 'date', e.target.value)}
@@ -180,9 +192,9 @@ export default function ShiftTable({ initialShifts, onShiftsChange }: ShiftTable
 
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label htmlFor={`mobile-start-${idx}`} className="text-xs text-gray-500">Start</label>
+                  <label htmlFor={`mobile-start-${shift.id}`} className="text-xs text-gray-500">Start</label>
                   <input
-                    id={`mobile-start-${idx}`}
+                    id={`mobile-start-${shift.id}`}
                     type="time"
                     value={shift.start_time}
                     onChange={(e) => updateShift(idx, 'start_time', e.target.value)}
@@ -190,9 +202,9 @@ export default function ShiftTable({ initialShifts, onShiftsChange }: ShiftTable
                   />
                 </div>
                 <div>
-                  <label htmlFor={`mobile-end-${idx}`} className="text-xs text-gray-500">Slutt</label>
+                  <label htmlFor={`mobile-end-${shift.id}`} className="text-xs text-gray-500">Slutt</label>
                   <input
-                    id={`mobile-end-${idx}`}
+                    id={`mobile-end-${shift.id}`}
                     type="time"
                     value={shift.end_time}
                     onChange={(e) => updateShift(idx, 'end_time', e.target.value)}
@@ -202,9 +214,9 @@ export default function ShiftTable({ initialShifts, onShiftsChange }: ShiftTable
               </div>
 
               <div>
-                <label htmlFor={`mobile-type-${idx}`} className="text-xs text-gray-500">Type</label>
+                <label htmlFor={`mobile-type-${shift.id}`} className="text-xs text-gray-500">Type</label>
                 <select
-                  id={`mobile-type-${idx}`}
+                  id={`mobile-type-${shift.id}`}
                   value={shift.shift_type}
                   onChange={(e) => updateShift(idx, 'shift_type', e.target.value)}
                   className="w-full px-2 py-1 border border-gray-300 rounded capitalize"

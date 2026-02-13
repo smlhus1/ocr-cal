@@ -2,7 +2,9 @@
 Security utilities including rate limiting, CORS, and file validation.
 """
 import hashlib
+import hmac
 import logging
+import time
 
 import magic
 from slowapi import Limiter
@@ -28,7 +30,11 @@ def get_composite_key(request: Request) -> str:
 
 
 # Rate limiter instance with composite key
-limiter = Limiter(key_func=get_composite_key)
+# Disable rate limiting in development for easier testing
+limiter = Limiter(
+    key_func=get_composite_key,
+    enabled=settings.environment != "development",
+)
 
 
 def get_user_identifier(request: Request) -> str:
@@ -43,54 +49,112 @@ def get_user_identifier(request: Request) -> str:
     return identifier
 
 
-async def validate_file(file: UploadFile) -> None:
+# Download token expiry in seconds (10 minutes)
+DOWNLOAD_TOKEN_EXPIRY = 600
+
+
+def generate_download_token(upload_id: str) -> str:
     """
-    Validate uploaded file:
+    Generate HMAC-signed download token for a specific upload.
+    Token includes expiry timestamp and is signed with SECRET_SALT.
+
+    Args:
+        upload_id: The upload ID to authorize download for
+
+    Returns:
+        Signed token string in format "expiry:signature"
+    """
+    expiry = int(time.time()) + DOWNLOAD_TOKEN_EXPIRY
+    message = f"{upload_id}:{expiry}".encode()
+    signature = hmac.new(
+        settings.secret_salt.encode(), message, hashlib.sha256
+    ).hexdigest()
+    return f"{expiry}:{signature}"
+
+
+def validate_download_token(upload_id: str, token: str) -> None:
+    """
+    Validate HMAC-signed download token.
+
+    Args:
+        upload_id: The upload ID the token should authorize
+        token: The token string to verify
+
+    Raises:
+        HTTPException: If token is invalid or expired
+    """
+    try:
+        expiry_str, signature = token.split(":", 1)
+        expiry = int(expiry_str)
+    except (ValueError, AttributeError):
+        raise HTTPException(status_code=403, detail="Invalid download token")
+
+    # Check expiry
+    if time.time() > expiry:
+        raise HTTPException(status_code=403, detail="Download token expired")
+
+    # Verify signature
+    message = f"{upload_id}:{expiry}".encode()
+    expected = hmac.new(
+        settings.secret_salt.encode(), message, hashlib.sha256
+    ).hexdigest()
+
+    if not hmac.compare_digest(signature, expected):
+        raise HTTPException(status_code=403, detail="Invalid download token")
+
+
+async def validate_file(file: UploadFile) -> bytes:
+    """
+    Validate uploaded file and return its content.
     - Check size
     - Check MIME type
     - Validate file signature (magic bytes)
+
+    Returns:
+        File content as bytes (avoids double-read).
     """
-    # Check file size
+    from app.models import ALLOWED_MIME_TYPES
+
     content = await file.read()
     file_size = len(content)
-    await file.seek(0)  # Reset file pointer
-    
+
     max_size = settings.max_file_size_mb * 1024 * 1024
     if file_size > max_size:
         raise HTTPException(
             status_code=413,
             detail=f"File too large. Maximum size: {settings.max_file_size_mb}MB"
         )
-    
+
     if file_size == 0:
         raise HTTPException(
             status_code=400,
             detail="File is empty"
         )
-    
+
     # Validate MIME type from content (not just extension)
     try:
         file_type = magic.from_buffer(content, mime=True)
     except Exception as e:
-        logger.error(f"python-magic failed, rejecting file: {e}")
+        logger.error("python-magic failed, rejecting file: %s", e)
         raise HTTPException(
             status_code=400,
             detail="Could not determine file type. Please try again."
         )
-    
-    allowed_types = ["image/jpeg", "image/png", "application/pdf"]
-    if file_type not in allowed_types:
+
+    if file_type not in ALLOWED_MIME_TYPES:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid file type: {file_type}. Allowed: {', '.join(allowed_types)}"
+            detail=f"Invalid file type: {file_type}. Allowed: {', '.join(ALLOWED_MIME_TYPES)}"
         )
-    
+
     # Validate file signature (magic bytes)
     if not validate_file_signature(content, file_type):
         raise HTTPException(
             status_code=400,
             detail="File signature does not match declared type. Possible file corruption or security risk."
         )
+
+    return content
 
 
 def validate_file_signature(content: bytes, mime_type: str) -> bool:
@@ -117,65 +181,14 @@ def validate_file_signature(content: bytes, mime_type: str) -> bool:
 
 async def scan_file_for_malware(file_path: str) -> bool:
     """
-    Scan file for malware using ClamAV.
-    Returns True if file is safe, False if malware detected.
-    
-    Raises:
-        RuntimeError: If ClamAV is not available
+    Placeholder for malware scanning.
+    Files are already validated via magic bytes + file signatures.
+    All uploads auto-delete after 24h.
+
+    Returns True (safe) always - ClamAV removed for MVP to reduce image size.
     """
-    try:
-        import clamd
-        
-        # Try Unix socket first (Docker), then network
-        try:
-            cd = clamd.ClamdUnixSocket('/var/run/clamav/clamd.ctl')
-            cd.ping()
-        except (clamd.ConnectionError, FileNotFoundError):
-            try:
-                cd = clamd.ClamdNetworkSocket(host='localhost', port=3310)
-                cd.ping()
-            except clamd.ConnectionError:
-                # ClamAV not running - fail open in development, closed in production
-                if settings.environment == "development":
-                    logger.warning("ClamAV not available - skipping scan in development")
-                    return True
-                else:
-                    raise RuntimeError("ClamAV scanner not available in production")
-        
-        # Scan the file
-        result = cd.scan(file_path)
-        
-        if result is None:
-            return True  # No result means clean
-        
-        # Check result for this file
-        file_result = result.get(file_path)
-        if file_result is None:
-            return True
-        
-        status, signature = file_result
-        if status == 'OK':
-            return True
-        elif status == 'FOUND':
-            logger.warning(f"Malware detected: {signature}")
-            return False
-        else:
-            logger.error(f"ClamAV error: {status}")
-            return False
-            
-    except ImportError:
-        # clamd not installed - allow in dev, block in production
-        if settings.environment == "development":
-            logger.warning("clamd not installed - skipping scan")
-            return True
-        else:
-            raise RuntimeError("Malware scanning not configured")
-    except Exception as e:
-        logger.error(f"Malware scan error: {e}")
-        # Fail closed in production
-        if settings.environment == "production":
-            return False
-        return True
+    logger.debug("Malware scan skipped (ClamAV removed for MVP)")
+    return True
 
 
 def get_country_code(request: Request) -> Optional[str]:

@@ -32,9 +32,9 @@ async def cleanup_old_files():
                 try:
                     file_path.unlink()
                     deleted_count += 1
-                    logger.debug(f"Deleted expired file: {file_path.name}")
+                    logger.debug("Deleted expired file: %s", file_path.name)
                 except Exception as e:
-                    logger.error(f"Failed to delete {file_path.name}: {e}")
+                    logger.error("Failed to delete %s: %s", file_path.name, e)
 
     return deleted_count
 
@@ -53,7 +53,7 @@ async def cleanup_blob_storage():
             count = await storage.cleanup_expired()
             return count
     except Exception as e:
-        logger.error(f"Blob storage cleanup failed: {e}")
+        logger.error("Blob storage cleanup failed: %s", e)
 
     return 0
 
@@ -66,7 +66,7 @@ async def cleanup_expired_db_records():
         count = await cleanup_expired_records()
         return count
     except Exception as e:
-        logger.error(f"Database cleanup failed: {e}")
+        logger.error("Database cleanup failed: %s", e)
         return 0
 
 
@@ -77,13 +77,13 @@ async def run_cleanup():
     logger.info("Starting scheduled cleanup...")
 
     files_deleted = await cleanup_old_files()
-    logger.info(f"Deleted {files_deleted} expired local files")
+    logger.info("Deleted %d expired local files", files_deleted)
 
     blobs_deleted = await cleanup_blob_storage()
-    logger.info(f"Deleted {blobs_deleted} expired blobs")
+    logger.info("Deleted %d expired blobs", blobs_deleted)
 
     records_deleted = await cleanup_expired_db_records()
-    logger.info(f"Deleted {records_deleted} expired database records")
+    logger.info("Deleted %d expired database records", records_deleted)
 
     logger.info("Cleanup complete")
 
@@ -94,13 +94,13 @@ async def schedule_cleanup(interval_seconds: int = 3600):
     """
     Schedule cleanup to run periodically.
     """
-    logger.info(f"Cleanup scheduler started (interval: {interval_seconds}s)")
+    logger.info("Cleanup scheduler started (interval: %ds)", interval_seconds)
 
     while True:
         try:
             await run_cleanup()
         except Exception as e:
-            logger.error(f"Cleanup job failed: {e}")
+            logger.error("Cleanup job failed: %s", e)
 
         await asyncio.sleep(interval_seconds)
 
