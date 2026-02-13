@@ -1,4 +1,6 @@
 import UploadSection from '@/components/UploadSection'
+import CreditBalance from '@/components/CreditBalance'
+import CreditPacks from '@/components/CreditPacks'
 
 export default function Home() {
   return (
@@ -16,60 +18,20 @@ export default function Home() {
         </p>
       </div>
 
+      {/* Credit Balance */}
+      <div className="mb-6">
+        <CreditBalance />
+      </div>
+
       {/* Upload (Client Component) */}
       <UploadSection />
 
       {/* Pricing */}
-      <div className="mt-12 grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div className="border border-gray-200 rounded-lg p-6 bg-white">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-lg font-semibold text-gray-900">Gratis</h3>
-            <span className="text-2xl font-bold text-gray-900">0 kr</span>
-          </div>
-          <p className="text-sm text-gray-500 mb-4">per mnd</p>
-          <ul className="space-y-2 text-sm text-gray-600">
-            <li className="flex items-center">
-              <svg className="w-4 h-4 text-green-500 mr-2 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>
-              2 konverteringer per mnd
-            </li>
-            <li className="flex items-center">
-              <svg className="w-4 h-4 text-green-500 mr-2 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>
-              Standard OCR (Tesseract)
-            </li>
-            <li className="flex items-center">
-              <svg className="w-4 h-4 text-green-500 mr-2 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>
-              Rediger vakter manuelt
-            </li>
-          </ul>
-        </div>
-        <div className="border-2 border-purple-400 rounded-lg p-6 bg-purple-50 relative">
-          <div className="absolute -top-3 left-4 bg-purple-500 text-white text-xs font-bold px-3 py-1 rounded-full">
-            Anbefalt
-          </div>
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-lg font-semibold text-gray-900">Premium</h3>
-            <span className="text-2xl font-bold text-gray-900">99 kr</span>
-          </div>
-          <p className="text-sm text-gray-500 mb-4">per mnd</p>
-          <ul className="space-y-2 text-sm text-gray-600">
-            <li className="flex items-center">
-              <svg className="w-4 h-4 text-purple-500 mr-2 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>
-              Ubegrenset konverteringer
-            </li>
-            <li className="flex items-center">
-              <svg className="w-4 h-4 text-purple-500 mr-2 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>
-              AI-forbedret OCR (GPT-4 Vision)
-            </li>
-            <li className="flex items-center">
-              <svg className="w-4 h-4 text-purple-500 mr-2 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>
-              Batch-opplasting (opptil 10 filer)
-            </li>
-            <li className="flex items-center">
-              <svg className="w-4 h-4 text-purple-500 mr-2 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>
-              Prioritert prosessering
-            </li>
-          </ul>
-        </div>
+      <div className="mt-12">
+        <h2 className="text-2xl font-bold text-gray-900 text-center mb-8">
+          Trenger du flere konverteringer?
+        </h2>
+        <CreditPacks />
       </div>
 
       {/* Features */}

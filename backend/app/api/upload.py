@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from app.models import UploadResponse, QuotaExceededResponse
 from app.security import limiter, validate_file, get_user_identifier, get_country_code, scan_file_for_malware
 from app.storage.blob_storage import get_storage_service
-from app.database import log_upload
+from app.database import log_upload, deduct_credit
 
 logger = logging.getLogger('shiftsync')
 
@@ -43,30 +43,33 @@ async def upload_file(request: Request, file: UploadFile = File(...)):
         402: Quota exceeded
         429: Rate limit exceeded
     """
-    # Check quota (free tier enforcement via session cookie)
+    # Check quota (free tier + credits enforcement via session cookie)
     from app.payment import payment_service
 
     session_id = getattr(request.state, 'session_id', None)
     if not session_id:
         session_id = request.cookies.get('session_id', 'unknown')
-    has_quota, remaining = await payment_service.check_quota(session_id)
-    
+    has_quota, free_remaining, credits = await payment_service.check_quota(session_id)
+    use_paid_credits = (free_remaining == 0 and credits > 0)
+
     if not has_quota:
-        # Create checkout session for upgrade
-        try:
-            checkout_url = await payment_service.create_checkout_session(
-                success_url=f"{request.base_url}success",
-                cancel_url=f"{request.base_url}pricing"
-            )
-        except Exception:
-            checkout_url = "/pricing"  # Fallback
-        
+        # Build credit packs for 402 response
+        credit_packs = [
+            {
+                "pack_id": pack_id,
+                "credits": pack["credits"],
+                "price_nok": pack["price_nok"] / 100,
+                "name": pack["name"],
+            }
+            for pack_id, pack in payment_service.CREDIT_PACKS.items()
+        ]
+
         return JSONResponse(
             status_code=402,
             content={
                 "error": "quota_exceeded",
-                "message": f"Du har brukt opp gratis-kvoten ({payment_service.FREE_TIER_LIMIT} opplastinger per måned)",
-                "upgrade_url": checkout_url
+                "message": f"Du har brukt opp gratis-kvoten ({payment_service.FREE_TIER_LIMIT} per måned). Kjøp kreditter for å fortsette.",
+                "credit_packs": credit_packs,
             }
         )
     
@@ -125,9 +128,15 @@ async def upload_file(request: Request, file: UploadFile = File(...)):
     except Exception as e:
         logger.warning("Could not log upload to database: %s", e)
     
+    # Deduct credit if using paid credits
+    if use_paid_credits:
+        deducted = await deduct_credit(session_id)
+        if not deducted:
+            logger.warning("Credit deduction failed for session %s", session_id[:8])
+
     # Return response
     expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
-    
+
     return UploadResponse(
         upload_id=upload_id,
         status="uploaded",

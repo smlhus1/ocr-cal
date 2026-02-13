@@ -96,7 +96,7 @@ export default function DragDropUpload({
           if (error.statusCode === 413) errorMessage = 'For stor (maks 10MB)'
           else if (error.statusCode === 400) errorMessage = 'Ugyldig fil'
           else if (error.statusCode === 429) errorMessage = 'For mange forespørsler, vent litt'
-          else if (error.statusCode === 402) errorMessage = 'Du har brukt opp gratiskvoten (2 per mnd). Oppgrader til Premium for ubegrenset bruk.'
+          else if (error.statusCode === 402) errorMessage = 'Du har brukt opp gratiskvoten (2 per mnd). Kjøp kreditter under for å fortsette.'
           else errorMessage = error.detail || errorMessage
         } else {
           errorMessage = (error as Error).message || errorMessage

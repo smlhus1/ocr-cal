@@ -88,6 +88,7 @@ class AnonymousSession(Base):
     session_id = Column(String(36), primary_key=True)
     stripe_subscription_id = Column(String(255), nullable=True)
     status = Column(String(20), nullable=False, default='free')  # 'free', 'premium', 'cancelled'
+    credits = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
@@ -307,6 +308,60 @@ async def upsert_session(
             ))
 
         await session.commit()
+
+
+async def get_credit_balance(session_id: str) -> int:
+    """Get credit balance for a session."""
+    async with AsyncSessionLocal() as session:
+        from sqlalchemy import select
+
+        stmt = select(AnonymousSession.credits).where(
+            AnonymousSession.session_id == session_id
+        )
+        result = await session.execute(stmt)
+        balance = result.scalar_one_or_none()
+        return balance if balance is not None else 0
+
+
+async def add_credits(session_id: str, amount: int) -> None:
+    """Add credits to a session (upserts if session doesn't exist)."""
+    async with AsyncSessionLocal() as session:
+        from sqlalchemy import select
+
+        existing = await session.execute(
+            select(AnonymousSession).where(AnonymousSession.session_id == session_id)
+        )
+        row = existing.scalar_one_or_none()
+
+        if row:
+            row.credits = row.credits + amount
+            row.updated_at = datetime.now(timezone.utc)
+        else:
+            session.add(AnonymousSession(
+                session_id=session_id,
+                credits=amount,
+            ))
+
+        await session.commit()
+
+
+async def deduct_credit(session_id: str) -> bool:
+    """Deduct 1 credit from session. Returns True if successful, False if insufficient."""
+    async with AsyncSessionLocal() as session:
+        from sqlalchemy import select
+
+        existing = await session.execute(
+            select(AnonymousSession).where(AnonymousSession.session_id == session_id)
+        )
+        row = existing.scalar_one_or_none()
+
+        if not row or row.credits <= 0:
+            return False
+
+        row.credits = row.credits - 1
+        row.updated_at = datetime.now(timezone.utc)
+        await session.commit()
+        return True
 
 
 async def log_processing_result(

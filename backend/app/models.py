@@ -94,9 +94,17 @@ class FeedbackRequest(BaseModel):
     correction_data: Optional[dict] = None
 
 
+class CreditPack(BaseModel):
+    """Credit pack info for purchase."""
+    pack_id: str
+    credits: int
+    price_nok: float
+    name: str
+
+
 class QuotaExceededResponse(BaseModel):
     """Response when quota is exceeded."""
     error: Literal["quota_exceeded"]
     message: str
-    upgrade_url: str
+    credit_packs: List[CreditPack]
 
