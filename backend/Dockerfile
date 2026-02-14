@@ -1,7 +1,7 @@
 # Multi-stage build for ShiftSync Backend
 # Optimized for production with security best practices
 
-FROM python:3.11.11-slim@sha256:081075da77b2b55c23c088251026fb69a7b2bf92471e491ff5fd75c192fd38e5 as base
+FROM python:3.14.3-slim@sha256:486b8092bfb12997e10d4920897213a06563449c951c5506c2a2cfaf591c599f as base
 
 # Install system dependencies including Tesseract OCR
 RUN apt-get update && apt-get install -y \
