@@ -18,6 +18,19 @@ export const metadata: Metadata = {
   description: 'Konverter vaktplan-bilder til iCalendar med OCR. Aldri skriv inn vakter manuelt igjen!',
   keywords: 'vaktplan, kalender, OCR, shift schedule, ical, vakter',
   authors: [{ name: 'ShiftSync' }],
+  openGraph: {
+    title: 'ShiftSync - Vaktplan til Kalender',
+    description: 'Konverter vaktplan-bilder til iCalendar med OCR. Aldri skriv inn vakter manuelt igjen!',
+    url: 'https://shiftsync.no',
+    siteName: 'ShiftSync',
+    locale: 'nb_NO',
+    type: 'website',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'ShiftSync - Vaktplan til Kalender',
+    description: 'Konverter vaktplan-bilder til iCalendar med OCR. Aldri skriv inn vakter manuelt igjen!',
+  },
 }
 
 export default function RootLayout({
@@ -58,9 +71,22 @@ export default function RootLayout({
         </main>
         <footer className="bg-white border-t border-gray-200 mt-12">
           <div className="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
-            <p className="text-center text-gray-500 text-sm">
-              &copy; {new Date().getFullYear()} ShiftSync. Utviklet med fokus p&aring; sikkerhet og personvern.
-            </p>
+            <div className="flex flex-col sm:flex-row justify-center items-center gap-2 sm:gap-6 text-sm text-gray-500">
+              <p>
+                &copy; {new Date().getFullYear()} ShiftSync
+              </p>
+              <nav aria-label="Footer" className="flex gap-4">
+                <Link href="/personvern" className="hover:text-gray-700 transition-colors focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-2 rounded">
+                  Personvern
+                </Link>
+                <Link href="/vilkar" className="hover:text-gray-700 transition-colors focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-2 rounded">
+                  Vilk&aring;r
+                </Link>
+                <Link href="/about" className="hover:text-gray-700 transition-colors focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-2 rounded">
+                  Om oss
+                </Link>
+              </nav>
+            </div>
           </div>
         </footer>
         <ToastContainer />

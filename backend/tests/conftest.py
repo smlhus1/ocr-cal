@@ -8,7 +8,7 @@ import os
 
 # Set test env vars before any app imports
 os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
-os.environ.setdefault("SECRET_SALT", "test_salt_for_testing")
+os.environ.setdefault("SECRET_SALT", "test_salt_for_testing_minimum_32chars!")
 os.environ.setdefault("ENVIRONMENT", "testing")
 os.environ.setdefault("INTERNAL_API_KEY", "test_api_key_12345")
 
@@ -24,7 +24,7 @@ def test_settings():
     """Mock settings for testing."""
     with patch('app.config.settings') as mock_settings:
         mock_settings.environment = "testing"
-        mock_settings.secret_salt = "test_salt_for_testing"
+        mock_settings.secret_salt = "test_salt_for_testing_minimum_32chars!"
         mock_settings.internal_api_key = "test_api_key_12345"
         mock_settings.database_url = "sqlite+aiosqlite:///:memory:"
         mock_settings.max_file_size_mb = 10

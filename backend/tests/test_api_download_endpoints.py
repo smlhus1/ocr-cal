@@ -109,7 +109,7 @@ class TestDownloadToken:
         from app.security import generate_download_token
 
         with patch('app.security.settings') as mock_settings:
-            mock_settings.secret_salt = "test_salt_for_testing"
+            mock_settings.secret_salt = "test_salt_for_testing_minimum_32chars!"
             # Generate token for session-A
             token = generate_download_token("test-upload-456", "session-A")
 

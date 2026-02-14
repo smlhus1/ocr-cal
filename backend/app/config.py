@@ -4,6 +4,7 @@ Supports loading from .env file and Azure Key Vault in production.
 """
 import os
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import field_validator
 from typing import Optional
 
 
@@ -45,6 +46,16 @@ class Settings(BaseSettings):
     # Security
     secret_salt: str
     internal_api_key: Optional[str] = None  # API key for internal endpoints
+
+    @field_validator('secret_salt')
+    @classmethod
+    def validate_secret_salt(cls, v: str) -> str:
+        if len(v) < 32:
+            raise ValueError(
+                'SECRET_SALT must be at least 32 characters. '
+                'Generate one with: python -c "import secrets; print(secrets.token_hex(32))"'
+            )
+        return v
     
     # Dev bypass quota (must be explicitly enabled)
     dev_bypass_quota: bool = False

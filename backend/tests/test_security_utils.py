@@ -22,14 +22,14 @@ class TestDownloadToken:
 
     @patch('app.security.settings')
     def test_generate_and_validate(self, mock_settings):
-        mock_settings.secret_salt = "test_salt"
+        mock_settings.secret_salt = "test_salt_for_testing_minimum_32chars!"
         token = generate_download_token("upload-123", "session-abc")
         # Should not raise
         validate_download_token("upload-123", token, "session-abc")
 
     @patch('app.security.settings')
     def test_expired_token_rejected(self, mock_settings):
-        mock_settings.secret_salt = "test_salt"
+        mock_settings.secret_salt = "test_salt_for_testing_minimum_32chars!"
 
         # Create a token with expired time
         expired_time = str(int(time.time()) - 100)
@@ -37,7 +37,7 @@ class TestDownloadToken:
         import hashlib
         message = f"upload-123:session-abc:{expired_time}".encode()
         signature = hmac.new(
-            "test_salt".encode(), message, hashlib.sha256
+            "test_salt_for_testing_minimum_32chars!".encode(), message, hashlib.sha256
         ).hexdigest()
         expired_token = f"{expired_time}:{signature}"
 
@@ -47,7 +47,7 @@ class TestDownloadToken:
 
     @patch('app.security.settings')
     def test_wrong_upload_id_rejected(self, mock_settings):
-        mock_settings.secret_salt = "test_salt"
+        mock_settings.secret_salt = "test_salt_for_testing_minimum_32chars!"
         token = generate_download_token("upload-123", "session-abc")
 
         with pytest.raises(HTTPException) as exc_info:
@@ -56,7 +56,7 @@ class TestDownloadToken:
 
     @patch('app.security.settings')
     def test_wrong_session_rejected(self, mock_settings):
-        mock_settings.secret_salt = "test_salt"
+        mock_settings.secret_salt = "test_salt_for_testing_minimum_32chars!"
         token = generate_download_token("upload-123", "session-abc")
 
         with pytest.raises(HTTPException) as exc_info:
@@ -65,7 +65,7 @@ class TestDownloadToken:
 
     @patch('app.security.settings')
     def test_tampered_signature_rejected(self, mock_settings):
-        mock_settings.secret_salt = "test_salt"
+        mock_settings.secret_salt = "test_salt_for_testing_minimum_32chars!"
         token = generate_download_token("upload-123", "session-abc")
 
         # Tamper with signature
@@ -78,7 +78,7 @@ class TestDownloadToken:
 
     @patch('app.security.settings')
     def test_malformed_token_rejected(self, mock_settings):
-        mock_settings.secret_salt = "test_salt"
+        mock_settings.secret_salt = "test_salt_for_testing_minimum_32chars!"
 
         with pytest.raises(HTTPException) as exc_info:
             validate_download_token("upload-123", "garbage", "session-abc")
@@ -86,7 +86,7 @@ class TestDownloadToken:
 
     @patch('app.security.settings')
     def test_empty_token_rejected(self, mock_settings):
-        mock_settings.secret_salt = "test_salt"
+        mock_settings.secret_salt = "test_salt_for_testing_minimum_32chars!"
 
         with pytest.raises(HTTPException):
             validate_download_token("upload-123", "", "session-abc")
@@ -133,7 +133,7 @@ class TestGetUserIdentifier:
 
     @patch('app.security.settings')
     def test_deterministic(self, mock_settings):
-        mock_settings.secret_salt = "test_salt"
+        mock_settings.secret_salt = "test_salt_for_testing_minimum_32chars!"
         request = MagicMock()
         request.client.host = "192.168.1.1"
         request.headers = {}
@@ -144,7 +144,7 @@ class TestGetUserIdentifier:
 
     @patch('app.security.settings')
     def test_different_ips(self, mock_settings):
-        mock_settings.secret_salt = "test_salt"
+        mock_settings.secret_salt = "test_salt_for_testing_minimum_32chars!"
 
         req1 = MagicMock()
         req1.client.host = "192.168.1.1"
@@ -160,7 +160,7 @@ class TestGetUserIdentifier:
 
     @patch('app.security.settings')
     def test_returns_16_chars(self, mock_settings):
-        mock_settings.secret_salt = "test_salt"
+        mock_settings.secret_salt = "test_salt_for_testing_minimum_32chars!"
         request = MagicMock()
         request.client.host = "192.168.1.1"
         request.headers = {}
