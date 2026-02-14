@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
+import Link from 'next/link'
 
 export default function CookieConsent() {
   const [visible, setVisible] = useState(false)
@@ -36,7 +37,10 @@ export default function CookieConsent() {
       <div className="max-w-4xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3">
         <p className="text-sm text-gray-600">
           Vi bruker en funksjonell informasjonskapsel for å holde styr på gratiskvoten din.
-          Ingen sporing eller tredjepartsdeling.
+          Ingen sporing eller tredjepartsdeling.{' '}
+          <Link href="/personvern" className="underline hover:text-gray-900 transition-colors">
+            Les mer
+          </Link>
         </p>
         <button
           ref={buttonRef}
