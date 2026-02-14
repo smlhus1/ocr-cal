@@ -23,51 +23,57 @@ class TestDownloadToken:
     @patch('app.security.settings')
     def test_generate_and_validate(self, mock_settings):
         mock_settings.secret_salt = "test_salt"
-        token = generate_download_token("upload-123")
+        token = generate_download_token("upload-123", "session-abc")
         # Should not raise
-        validate_download_token("upload-123", token)
+        validate_download_token("upload-123", token, "session-abc")
 
     @patch('app.security.settings')
     def test_expired_token_rejected(self, mock_settings):
         mock_settings.secret_salt = "test_salt"
-        token = generate_download_token("upload-123")
 
-        # Tamper with expiry to make it expired
-        parts = token.split(":")
+        # Create a token with expired time
         expired_time = str(int(time.time()) - 100)
-        # Need to re-sign with expired time
         import hmac
         import hashlib
-        message = f"upload-123:{expired_time}".encode()
+        message = f"upload-123:session-abc:{expired_time}".encode()
         signature = hmac.new(
             "test_salt".encode(), message, hashlib.sha256
         ).hexdigest()
         expired_token = f"{expired_time}:{signature}"
 
         with pytest.raises(HTTPException) as exc_info:
-            validate_download_token("upload-123", expired_token)
+            validate_download_token("upload-123", expired_token, "session-abc")
         assert exc_info.value.status_code == 403
 
     @patch('app.security.settings')
     def test_wrong_upload_id_rejected(self, mock_settings):
         mock_settings.secret_salt = "test_salt"
-        token = generate_download_token("upload-123")
+        token = generate_download_token("upload-123", "session-abc")
 
         with pytest.raises(HTTPException) as exc_info:
-            validate_download_token("upload-456", token)
+            validate_download_token("upload-456", token, "session-abc")
+        assert exc_info.value.status_code == 403
+
+    @patch('app.security.settings')
+    def test_wrong_session_rejected(self, mock_settings):
+        mock_settings.secret_salt = "test_salt"
+        token = generate_download_token("upload-123", "session-abc")
+
+        with pytest.raises(HTTPException) as exc_info:
+            validate_download_token("upload-123", token, "session-other")
         assert exc_info.value.status_code == 403
 
     @patch('app.security.settings')
     def test_tampered_signature_rejected(self, mock_settings):
         mock_settings.secret_salt = "test_salt"
-        token = generate_download_token("upload-123")
+        token = generate_download_token("upload-123", "session-abc")
 
         # Tamper with signature
         parts = token.split(":")
         tampered_token = f"{parts[0]}:{'a' * 64}"
 
         with pytest.raises(HTTPException) as exc_info:
-            validate_download_token("upload-123", tampered_token)
+            validate_download_token("upload-123", tampered_token, "session-abc")
         assert exc_info.value.status_code == 403
 
     @patch('app.security.settings')
@@ -75,7 +81,7 @@ class TestDownloadToken:
         mock_settings.secret_salt = "test_salt"
 
         with pytest.raises(HTTPException) as exc_info:
-            validate_download_token("upload-123", "garbage")
+            validate_download_token("upload-123", "garbage", "session-abc")
         assert exc_info.value.status_code == 403
 
     @patch('app.security.settings')
@@ -83,7 +89,7 @@ class TestDownloadToken:
         mock_settings.secret_salt = "test_salt"
 
         with pytest.raises(HTTPException):
-            validate_download_token("upload-123", "")
+            validate_download_token("upload-123", "", "session-abc")
 
 
 class TestValidateFileSignature:

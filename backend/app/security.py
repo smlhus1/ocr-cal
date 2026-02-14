@@ -25,7 +25,7 @@ def get_composite_key(request: Request) -> str:
     user_agent = request.headers.get('user-agent', 'unknown')
     
     # Create composite key
-    composite = f"{ip}:{hashlib.md5(user_agent.encode()).hexdigest()[:8]}"
+    composite = f"{ip}:{hashlib.sha256(user_agent.encode()).hexdigest()[:8]}"
     return composite
 
 
@@ -53,32 +53,34 @@ def get_user_identifier(request: Request) -> str:
 DOWNLOAD_TOKEN_EXPIRY = 600
 
 
-def generate_download_token(upload_id: str) -> str:
+def generate_download_token(upload_id: str, session_id: str) -> str:
     """
-    Generate HMAC-signed download token for a specific upload.
+    Generate HMAC-signed download token for a specific upload bound to a session.
     Token includes expiry timestamp and is signed with SECRET_SALT.
 
     Args:
         upload_id: The upload ID to authorize download for
+        session_id: The session ID to bind the token to
 
     Returns:
         Signed token string in format "expiry:signature"
     """
     expiry = int(time.time()) + DOWNLOAD_TOKEN_EXPIRY
-    message = f"{upload_id}:{expiry}".encode()
+    message = f"{upload_id}:{session_id}:{expiry}".encode()
     signature = hmac.new(
         settings.secret_salt.encode(), message, hashlib.sha256
     ).hexdigest()
     return f"{expiry}:{signature}"
 
 
-def validate_download_token(upload_id: str, token: str) -> None:
+def validate_download_token(upload_id: str, token: str, session_id: str) -> None:
     """
-    Validate HMAC-signed download token.
+    Validate HMAC-signed download token bound to a session.
 
     Args:
         upload_id: The upload ID the token should authorize
         token: The token string to verify
+        session_id: The session ID the token should be bound to
 
     Raises:
         HTTPException: If token is invalid or expired
@@ -93,8 +95,8 @@ def validate_download_token(upload_id: str, token: str) -> None:
     if time.time() > expiry:
         raise HTTPException(status_code=403, detail="Download token expired")
 
-    # Verify signature
-    message = f"{upload_id}:{expiry}".encode()
+    # Verify signature (bound to session)
+    message = f"{upload_id}:{session_id}:{expiry}".encode()
     expected = hmac.new(
         settings.secret_salt.encode(), message, hashlib.sha256
     ).hexdigest()

@@ -78,12 +78,12 @@ class CheckoutResponse(BaseModel):
     checkout_url: str
 
 
-@router.post("/create-checkout-session", response_model=CheckoutResponse)
+@router.post("/create-checkout-session", response_model=CheckoutResponse, deprecated=True)
 @limiter.limit("5/minute")
 async def create_checkout_session(request: Request, checkout_request: CreateCheckoutRequest):
     """
     Create Stripe checkout session for legacy premium subscription.
-    Kept for backward compatibility.
+    Kept for backward compatibility. Use /create-credit-checkout instead.
     """
     session_id = getattr(request.state, 'session_id', None)
     if not session_id:
@@ -164,16 +164,29 @@ async def stripe_webhook(request: Request):
         logger.error("Stripe webhook error: %s", e)
         raise HTTPException(status_code=400, detail="Webhook verification failed")
 
-    # Handle events
+    # Idempotency: skip already-processed events
+    event_id = event.get("id")
     event_type = event.get("type", "")
-    logger.info("Stripe webhook received: %s", event_type)
+    logger.info("Stripe webhook received: %s (id=%s)", event_type, event_id)
 
+    if event_id:
+        from app.database import is_webhook_processed, mark_webhook_processed
+
+        if await is_webhook_processed(event_id):
+            logger.info("Webhook event %s already processed, skipping", event_id)
+            return {"status": "already_processed"}
+
+    # Handle events
     if event_type == "checkout.session.completed":
         await _handle_checkout_completed(event)
     elif event_type == "customer.subscription.deleted":
         await _handle_subscription_deleted(event)
     elif event_type == "invoice.payment_failed":
         await _handle_payment_failed(event)
+
+    # Mark event as processed
+    if event_id:
+        await mark_webhook_processed(event_id, event_type)
 
     return {"status": "success"}
 
@@ -183,22 +196,35 @@ async def _handle_checkout_completed(event: dict) -> None:
     session_data = event.get("data", {}).get("object", {})
     client_session_id = session_data.get("client_reference_id")
     metadata = session_data.get("metadata", {})
+    payment_status = session_data.get("payment_status")
 
     if not client_session_id:
         logger.warning("Checkout completed but missing client_reference_id")
         return
 
+    # Verify payment was actually completed
+    if payment_status != "paid":
+        logger.warning("Checkout event with payment_status=%s, skipping", payment_status)
+        return
+
     # Credit pack purchase (one-time payment with metadata)
     pack_id = metadata.get("pack_id")
     if pack_id:
-        credits_str = metadata.get("credits")
-        if not credits_str:
-            logger.error("Credit checkout missing credits in metadata: pack_id=%s", pack_id)
+        # Look up credits from server-side CREDIT_PACKS, not from metadata (tamper-proof)
+        pack = payment_service.CREDIT_PACKS.get(pack_id)
+        if not pack:
+            logger.error("Unknown pack_id in webhook metadata: %s", pack_id)
             return
 
+        credits = pack["credits"]
+
         from app.database import add_credits
-        credits = int(credits_str)
-        await add_credits(client_session_id, credits)
+        try:
+            await add_credits(client_session_id, credits)
+        except ValueError as e:
+            logger.error("Failed to add credits for session %s: %s", client_session_id[:8], e)
+            return
+
         logger.info(
             "Added %d credits for session %s (pack: %s)",
             credits, client_session_id[:8], pack_id

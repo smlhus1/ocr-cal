@@ -1,9 +1,10 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { apiClient, CreditPack } from '@/lib/api-client'
 
-const PACKS: CreditPack[] = [
+// Fallback packs used when API is unavailable
+const FALLBACK_PACKS: CreditPack[] = [
   {
     pack_id: 'pack_5',
     credits: 5,
@@ -28,8 +29,21 @@ const PACKS: CreditPack[] = [
 ]
 
 export default function CreditPacks() {
+  const [packs, setPacks] = useState<CreditPack[]>(FALLBACK_PACKS)
   const [loading, setLoading] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    apiClient.getCreditStatus()
+      .then((status) => {
+        if (status.credit_packs && status.credit_packs.length > 0) {
+          setPacks(status.credit_packs)
+        }
+      })
+      .catch(() => {
+        // Keep fallback packs on API failure
+      })
+  }, [])
 
   const handleBuy = async (packId: string) => {
     setLoading(packId)
@@ -49,7 +63,7 @@ export default function CreditPacks() {
   return (
     <div id="pricing">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {PACKS.map((pack, index) => {
+        {packs.map((pack, index) => {
           const isPopular = index === 1
           return (
             <div

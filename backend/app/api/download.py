@@ -74,9 +74,10 @@ async def generate_calendar(request: Request, calendar_request: GenerateCalendar
 async def get_download_token(request: Request, upload_id: str):
     """
     Generate a short-lived download token for a specific upload.
-    Token is HMAC-signed and expires after 10 minutes.
+    Token is HMAC-signed, bound to session, and expires after 10 minutes.
     """
-    token = generate_download_token(upload_id)
+    session_id = getattr(request.state, 'session_id', None) or request.cookies.get('session_id', '')
+    token = generate_download_token(upload_id, session_id)
     return {"token": token}
 
 
@@ -92,8 +93,9 @@ async def download_original(
     Available for 24h after upload.
     Requires a valid download token obtained from POST /download-token/{upload_id}.
     """
-    # Verify download token
-    validate_download_token(upload_id, token)
+    # Verify download token (bound to session)
+    session_id = getattr(request.state, 'session_id', None) or request.cookies.get('session_id', '')
+    validate_download_token(upload_id, token, session_id)
 
     from app.storage.blob_storage import get_storage_service
 

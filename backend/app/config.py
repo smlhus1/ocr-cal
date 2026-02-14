@@ -46,6 +46,9 @@ class Settings(BaseSettings):
     secret_salt: str
     internal_api_key: Optional[str] = None  # API key for internal endpoints
     
+    # Dev bypass quota (must be explicitly enabled)
+    dev_bypass_quota: bool = False
+
     # Rate Limiting
     rate_limit_per_minute: int = 10
     

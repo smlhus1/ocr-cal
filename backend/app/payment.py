@@ -73,8 +73,8 @@ class PaymentService:
             Tuple of (has_quota, free_remaining, credits)
             free_remaining=-1 means unlimited (legacy premium)
         """
-        # Skip quota check in development
-        if settings.environment == "development":
+        # Skip quota check only if explicitly configured
+        if settings.environment == "development" and settings.dev_bypass_quota:
             return True, -1, 0
 
         from app.database import get_session, get_upload_count_this_month, get_credit_balance

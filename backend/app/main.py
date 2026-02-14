@@ -1,13 +1,16 @@
 """
 FastAPI main application with security middleware and routing.
 """
+import re
+import time
+from collections import defaultdict
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
 from fastapi.responses import JSONResponse
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-import time
 
 from app.config import settings
 from app.security import limiter
@@ -53,20 +56,44 @@ app.add_middleware(
 )
 
 
+# IP-based rate limiter for new session creation (H-02: session rotation bypass)
+_session_creation_times: dict[str, list[float]] = defaultdict(list)
+_SESSION_RATE_LIMIT = 10  # max new sessions per IP per minute
+_SESSION_RATE_WINDOW = 60  # seconds
+
+
 # Session cookie middleware
 @app.middleware("http")
 async def session_middleware(request: Request, call_next):
     """Set anonymous session cookie for quota tracking."""
     import uuid as _uuid
+    from slowapi.util import get_remote_address
+
     session_id = request.cookies.get("session_id")
-    if not session_id:
+    is_new_session = not session_id
+
+    if is_new_session:
+        # Rate limit new session creation per IP
+        ip = get_remote_address(request)
+        now = time.time()
+        # Clean old entries
+        _session_creation_times[ip] = [
+            t for t in _session_creation_times[ip] if now - t < _SESSION_RATE_WINDOW
+        ]
+        if len(_session_creation_times[ip]) >= _SESSION_RATE_LIMIT:
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Too many new sessions. Please try again later."},
+            )
+        _session_creation_times[ip].append(now)
         session_id = str(_uuid.uuid4())
+
     request.state.session_id = session_id
 
     response = await call_next(request)
 
     # Set cookie if not present (30 days, HttpOnly, SameSite=Lax)
-    if not request.cookies.get("session_id"):
+    if is_new_session:
         response.set_cookie(
             key="session_id",
             value=session_id,
@@ -90,8 +117,18 @@ async def add_security_headers(request: Request, call_next):
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; script-src 'self'; style-src 'self'; "
+        "img-src 'self' data:; connect-src 'self'; "
+        "frame-ancestors 'none'; object-src 'none'; base-uri 'self'"
+    )
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(), usb=()"
 
     return response
+
+
+# UUID regex for validating X-Request-ID
+_UUID_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.IGNORECASE)
 
 
 # Request ID middleware
@@ -99,7 +136,12 @@ async def add_security_headers(request: Request, call_next):
 async def add_request_id(request: Request, call_next):
     """Generate or forward X-Request-ID for request tracing."""
     import uuid
-    request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+    incoming_id = request.headers.get("X-Request-ID")
+    # Only accept valid UUIDs to prevent header injection
+    if incoming_id and _UUID_RE.match(incoming_id):
+        request_id = incoming_id
+    else:
+        request_id = str(uuid.uuid4())
     request.state.request_id = request_id
     response = await call_next(request)
     response.headers["X-Request-ID"] = request_id

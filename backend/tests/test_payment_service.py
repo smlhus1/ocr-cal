@@ -125,6 +125,35 @@ class TestCheckQuota:
         assert free_remaining == 0
         assert credits == 10
 
+    @pytest.mark.asyncio
+    @patch('app.payment.settings')
+    @patch('app.database.get_upload_count_this_month', new_callable=AsyncMock)
+    @patch('app.database.get_session', new_callable=AsyncMock)
+    async def test_dev_bypass_requires_explicit_flag(self, mock_get_session, mock_count, mock_settings):
+        """Dev environment alone should NOT bypass quota (L-01)."""
+        service = PaymentService()
+
+        mock_settings.environment = "development"
+        mock_settings.dev_bypass_quota = False
+        mock_get_session.return_value = None
+        mock_count.return_value = 5  # Over limit
+
+        has_quota, free_remaining, credits = await service.check_quota("session-123")
+        assert has_quota is False
+
+    @pytest.mark.asyncio
+    @patch('app.payment.settings')
+    async def test_dev_bypass_with_flag_enabled(self, mock_settings):
+        """Dev environment with dev_bypass_quota=True should bypass."""
+        service = PaymentService()
+
+        mock_settings.environment = "development"
+        mock_settings.dev_bypass_quota = True
+
+        has_quota, free_remaining, credits = await service.check_quota("session-123")
+        assert has_quota is True
+        assert free_remaining == -1
+
 
 class TestCreateCheckoutSession:
     """Tests for PaymentService.create_checkout_session()."""

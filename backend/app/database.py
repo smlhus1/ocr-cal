@@ -117,6 +117,23 @@ class FeedbackLog(Base):
         return f"<FeedbackLog(id={self.id}, error_type={self.error_type})>"
 
 
+class WebhookEvent(Base):
+    """
+    Tracks processed Stripe webhook events for idempotency.
+    Prevents duplicate credit additions from replayed webhooks.
+    """
+    __tablename__ = "webhook_events"
+
+    event_id = Column(String(255), primary_key=True)
+    event_type = Column(String(100), nullable=False)
+    processed_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
+# Credit limits
+MAX_CREDIT_AMOUNT = 100
+MAX_CREDIT_BALANCE = 10000
+
+
 # Database helper functions
 
 async def get_db() -> AsyncSession:
@@ -133,6 +150,26 @@ async def get_db() -> AsyncSession:
             raise
         finally:
             await session.close()
+
+
+async def is_webhook_processed(event_id: str) -> bool:
+    """Check if a webhook event has already been processed."""
+    async with AsyncSessionLocal() as session:
+        from sqlalchemy import select
+
+        stmt = select(WebhookEvent.event_id).where(WebhookEvent.event_id == event_id)
+        result = await session.execute(stmt)
+        return result.scalar_one_or_none() is not None
+
+
+async def mark_webhook_processed(event_id: str, event_type: str) -> None:
+    """Mark a webhook event as processed."""
+    async with AsyncSessionLocal() as session:
+        session.add(WebhookEvent(
+            event_id=event_id,
+            event_type=event_type,
+        ))
+        await session.commit()
 
 
 async def init_db():
@@ -324,44 +361,67 @@ async def get_credit_balance(session_id: str) -> int:
 
 
 async def add_credits(session_id: str, amount: int) -> None:
-    """Add credits to a session (upserts if session doesn't exist)."""
-    async with AsyncSessionLocal() as session:
-        from sqlalchemy import select
+    """Add credits to a session atomically (upserts if session doesn't exist).
 
+    Raises:
+        ValueError: If amount is invalid or balance would exceed MAX_CREDIT_BALANCE.
+    """
+    if not (0 < amount <= MAX_CREDIT_AMOUNT):
+        raise ValueError(f"Credit amount must be between 1 and {MAX_CREDIT_AMOUNT}, got {amount}")
+
+    async with AsyncSessionLocal() as session:
+        from sqlalchemy import select, update
+
+        # Try atomic update first
+        stmt = update(AnonymousSession).where(
+            AnonymousSession.session_id == session_id,
+            AnonymousSession.credits + amount <= MAX_CREDIT_BALANCE,
+        ).values(
+            credits=AnonymousSession.credits + amount,
+            updated_at=datetime.now(timezone.utc),
+        )
+        result = await session.execute(stmt)
+
+        if result.rowcount > 0:
+            await session.commit()
+            return
+
+        # Check if session exists but balance would overflow
         existing = await session.execute(
-            select(AnonymousSession).where(AnonymousSession.session_id == session_id)
+            select(AnonymousSession.credits).where(AnonymousSession.session_id == session_id)
         )
         row = existing.scalar_one_or_none()
 
-        if row:
-            row.credits = row.credits + amount
-            row.updated_at = datetime.now(timezone.utc)
-        else:
-            session.add(AnonymousSession(
-                session_id=session_id,
-                credits=amount,
-            ))
+        if row is not None:
+            # Session exists but update failed — balance overflow
+            raise ValueError(f"Credit balance would exceed maximum of {MAX_CREDIT_BALANCE}")
 
+        # Session doesn't exist — create it
+        if amount > MAX_CREDIT_BALANCE:
+            raise ValueError(f"Credit balance would exceed maximum of {MAX_CREDIT_BALANCE}")
+
+        session.add(AnonymousSession(
+            session_id=session_id,
+            credits=amount,
+        ))
         await session.commit()
 
 
 async def deduct_credit(session_id: str) -> bool:
-    """Deduct 1 credit from session. Returns True if successful, False if insufficient."""
+    """Deduct 1 credit from session atomically. Returns True if successful, False if insufficient."""
     async with AsyncSessionLocal() as session:
-        from sqlalchemy import select
+        from sqlalchemy import update
 
-        existing = await session.execute(
-            select(AnonymousSession).where(AnonymousSession.session_id == session_id)
+        stmt = update(AnonymousSession).where(
+            AnonymousSession.session_id == session_id,
+            AnonymousSession.credits > 0,
+        ).values(
+            credits=AnonymousSession.credits - 1,
+            updated_at=datetime.now(timezone.utc),
         )
-        row = existing.scalar_one_or_none()
-
-        if not row or row.credits <= 0:
-            return False
-
-        row.credits = row.credits - 1
-        row.updated_at = datetime.now(timezone.utc)
+        result = await session.execute(stmt)
         await session.commit()
-        return True
+        return result.rowcount > 0
 
 
 async def log_processing_result(

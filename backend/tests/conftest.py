@@ -43,7 +43,9 @@ def test_settings():
 @pytest.fixture
 def client(test_settings):
     """Create test client with mocked dependencies."""
-    from app.main import app
+    from app.main import app, _session_creation_times
+    # Clear session rate limiter between tests to prevent 429s
+    _session_creation_times.clear()
     with TestClient(app) as test_client:
         yield test_client
 
